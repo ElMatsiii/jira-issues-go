@@ -1,0 +1,75 @@
+name: CI (jira-issues-go)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'jira-issues-go/**'
+      - 'jira-contracts/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'jira-issues-go/**'
+      - 'jira-contracts/**'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-coverage:
+    name: Go Test & Coverage Enforcement (>= 60%)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: jira-issues-go
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go 1.22
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: true
+          cache-dependency-path: jira-issues-go/go.sum
+
+      - name: Verify Module Dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Run Unit Tests with Coverage Profile
+        run: |
+          go test -v -coverprofile=coverage.out ./...
+
+      - name: Enforce >= 60% Coverage Threshold
+        run: |
+          chmod +x scripts/check-coverage.sh
+          ./scripts/check-coverage.sh coverage.out 60.0
+
+      - name: Generate Coverage Report HTML
+        if: always()
+        run: |
+          if [ -f coverage.out ]; then
+            go tool cover -html=coverage.out -o coverage.html
+          fi
+
+      - name: Upload Coverage Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jira-issues-go-coverage
+          path: |
+            jira-issues-go/coverage.out
+            jira-issues-go/coverage.html
+          retention-days: 14
