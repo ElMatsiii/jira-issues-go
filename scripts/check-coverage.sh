@@ -29,9 +29,9 @@ echo "------------------------------------------------------------"
 PASS=$(awk -v cov="$COVERAGE" -v req="$REQUIRED_THRESHOLD" 'BEGIN { if (cov >= req) print 1; else print 0 }')
 
 if [ "$PASS" -eq 1 ]; then
-  echo "✅ SUCCESS: Coverage threshold (${REQUIRED_THRESHOLD}%) satisfied!"
+  echo "[SUCCESS] Coverage threshold (${REQUIRED_THRESHOLD}%) satisfied!"
   exit 0
 else
-  echo "❌ FAILURE: Statement coverage (${COVERAGE}%) is below required threshold (${REQUIRED_THRESHOLD}%)!"
+  echo "[FAILURE] Statement coverage (${COVERAGE}%) is below required threshold (${REQUIRED_THRESHOLD}%)!"
   exit 1
 fi

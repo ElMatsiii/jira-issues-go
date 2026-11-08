@@ -1,4 +1,4 @@
-# 🔷 MS1: Jira Issues Service (`jira-issues-go`)
+# MS1: Jira Issues Service (`jira-issues-go`)
 
 [![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white)]()
 [![Coverage](https://img.shields.io/badge/Coverage-64.8%25-brightgreen.svg)]()
@@ -10,12 +10,12 @@ Microservicio de alto rendimiento implementado en **Go (Golang)** responsable de
 
 ---
 
-## 🏛️ Rol en la Arquitectura e Interoperabilidad
+## Rol en la Arquitectura e Interoperabilidad
 
 ```mermaid
 flowchart LR
-    BFF["🚀 BFF Gateway\n(NestJS / GraphQL)"] -->|"gRPC :50051\n(GetBacklog, CreateIssue)"| GO["🔷 MS1: Issues\n(Go 1.22+ Server)"]
-    S2["🔶 MS2: Sprints\n(NestJS)"] -->|"gRPC :50051\n(BatchAssignToSprint)"| GO
+    BFF["BFF Gateway\n(NestJS / GraphQL)"] -->|"gRPC :50051\n(GetBacklog, CreateIssue)"| GO["MS1: Issues\n(Go 1.22+ Server)"]
+    S2["MS2: Sprints\n(NestJS)"] -->|"gRPC :50051\n(BatchAssignToSprint)"| GO
     
     GO --- DB[("PostgreSQL\n(issues_db)")]
     GO -.->|"Publica Eventos\n(tópico: issues.events)"| KAFKA{{"Apache Kafka\n(:9092)"}}
@@ -31,7 +31,7 @@ flowchart LR
 
 ---
 
-## 📂 Estructura del Proyecto (Clean Architecture)
+## Estructura del Proyecto (Clean Architecture)
 
 ```text
 jira-issues-go/
@@ -66,7 +66,7 @@ jira-issues-go/
 
 ---
 
-## ⚙️ Variables de Entorno
+## Variables de Entorno
 
 | Variable | Descripción | Valor por Defecto |
 | :--- | :--- | :--- |
@@ -78,7 +78,7 @@ jira-issues-go/
 
 ---
 
-## 🧪 Pruebas Automatizadas y Cobertura
+## Pruebas Automatizadas y Cobertura
 
 El microservicio cuenta con pruebas unitarias, de concurrencia y de integración con mocks en memoria:
 
@@ -99,7 +99,7 @@ go tool cover -func=coverage.out
 
 ---
 
-## 🐳 Despliegue con Docker
+## Despliegue con Docker
 
 El microservicio utiliza una compilación **Multi-stage Zero-CGO** para generar un binario estático ligero y seguro:
 
@@ -116,6 +116,6 @@ docker run -d -p 50051:50051 \
 
 ---
 
-## 📄 Licencia
+## Licencia
 
-MIT License © 2026 Jira AI Team.
+MIT License (c) 2026 Jira AI Team.
