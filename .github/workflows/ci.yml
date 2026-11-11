@@ -5,18 +5,10 @@ on:
     branches:
       - main
       - master
-    paths:
-      - 'jira-issues-go/**'
-      - 'jira-contracts/**'
-      - '.github/workflows/ci.yml'
   pull_request:
     branches:
       - main
       - master
-    paths:
-      - 'jira-issues-go/**'
-      - 'jira-contracts/**'
-      - '.github/workflows/ci.yml'
   workflow_dispatch:
 
 concurrency:
@@ -35,6 +27,11 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          path: jira-issues-go
+
+      - name: Checkout shared contracts
+        run: git clone --depth 1 https://github.com/ElMatsiii/jira-contracts.git ../jira-contracts
 
       - name: Setup Go 1.22
         uses: actions/setup-go@v5
