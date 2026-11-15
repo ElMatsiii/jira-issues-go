@@ -37,6 +37,7 @@ func TestMigrationFiles_RepositoryMigrationsInOrder(t *testing.T) {
 		"000001_init_schema.up.sql",
 		"000002_issue_parent.up.sql",
 		"000003_identity_workspaces.up.sql",
+		"000004_work_logs.up.sql",
 	}, names)
 }
 

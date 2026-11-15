@@ -56,6 +56,18 @@ type IdentityRepository interface {
 	GetProjectWorkspaceID(ctx context.Context, projectID string) (string, error)
 }
 
+// WorkLogRepository stores hours logged per issue (table work_logs).
+type WorkLogRepository interface {
+	// Create inserts the entry and fills ID, LoggedAt, IssueKey, IssueTitle and UserName.
+	Create(ctx context.Context, log *domain.WorkLog) error
+	// ListByProject returns the project's newest entries first, at most limit.
+	ListByProject(ctx context.Context, projectID string, limit int) ([]*domain.WorkLog, error)
+	// SumProjectHours adds every entry of the project (not only a listed page).
+	SumProjectHours(ctx context.Context, projectID string) (float64, error)
+	// SumSprintHours adds the project's entries logged while their issue was in the sprint.
+	SumSprintHours(ctx context.Context, projectID, sprintID string) (float64, error)
+}
+
 // ProjectRepository defines data access methods for Project entities.
 type ProjectRepository interface {
 	Create(ctx context.Context, project *domain.Project) error

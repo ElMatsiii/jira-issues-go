@@ -70,6 +70,8 @@ func main() {
 	issuesv1.RegisterIssueServiceServer(grpcServer, grpcHandler)
 	issuesv1.RegisterIdentityServiceServer(grpcServer, grpchandler.NewIdentityServer(identitySvc))
 	issuesv1.RegisterProjectServiceServer(grpcServer, grpchandler.NewProjectServer(identitySvc))
+	workLogSvc := service.NewWorkLogService(postgres.NewWorkLogRepository(db), repo, identitySvc)
+	issuesv1.RegisterWorkLogServiceServer(grpcServer, grpchandler.NewWorkLogServer(workLogSvc))
 	reflection.Register(grpcServer)
 
 	// 5. Bind TCP Listener

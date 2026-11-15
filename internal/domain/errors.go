@@ -24,6 +24,10 @@ var (
 	ErrInvalidCredentials  = errors.New("invalid email or password")
 	ErrWorkspaceForbidden  = errors.New("not allowed in this workspace")
 	ErrProjectKeyTaken     = errors.New("project key already in use")
+	ErrProjectForbidden    = errors.New("no access to this project")
+	// Work logs.
+	ErrInvalidWorkLog    = errors.New("invalid work log")
+	ErrIssueNotInProject = errors.New("issue not found in this project")
 	// ErrVersionConflict means the issue changed after it was read (optimistic concurrency).
 	ErrVersionConflict = errors.New("issue was modified concurrently, retry the operation")
 )
