@@ -15,6 +15,19 @@ import (
 	"jira-issues-go/internal/service"
 )
 
+// validateOptionalUUID returns InvalidArgument when a non-empty identifier is not a UUID. Those
+// columns are UUID in Postgres, so a malformed value would otherwise fail as an opaque Internal error.
+func validateOptionalUUID(field, value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	if _, err := uuid.Parse(trimmed); err != nil {
+		return status.Errorf(codes.InvalidArgument, "%s must be a valid UUID, got %q", field, trimmed)
+	}
+	return nil
+}
+
 // CreateIssue handles creation of a new work item.
 func (s *Server) CreateIssue(ctx context.Context, req *issuesv1.CreateIssueRequest) (*issuesv1.CreateIssueResponse, error) {
 	if req == nil {
@@ -46,6 +59,11 @@ func (s *Server) CreateIssue(ctx context.Context, req *issuesv1.CreateIssueReque
 
 	if req.GetStoryPoints() < 0 {
 		return nil, status.Error(codes.InvalidArgument, "story points cannot be negative")
+	}
+
+	// issues.sprint_id is a UUID column (no FK: the sprint lives in MS2).
+	if err := validateOptionalUUID("sprint_id", req.GetSprintId()); err != nil {
+		return nil, err
 	}
 
 	var sprintID, assigneeID, reporterID *string
@@ -131,6 +149,11 @@ func (s *Server) GetIssue(ctx context.Context, req *issuesv1.GetIssueRequest) (*
 func (s *Server) ListIssues(ctx context.Context, req *issuesv1.ListIssuesRequest) (*issuesv1.ListIssuesResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request cannot be nil")
+	}
+
+	// An empty project_id lists across projects; a non-empty one must be a UUID (projects.id).
+	if err := validateOptionalUUID("project_id", req.GetProjectId()); err != nil {
+		return nil, err
 	}
 
 	limit := req.GetLimit()

@@ -97,3 +97,37 @@ func TestGRPCHandler_UpdateIssueStatus_SameStatus_NoOp(t *testing.T) {
 	assert.Equal(t, 0, fixture.repo.UpdateStatusCalls)
 	assert.Empty(t, fixture.producer.Events)
 }
+
+func TestGRPCHandler_CreateIssue_SprintID_MustBeUUID(t *testing.T) {
+	fixture := setupGRPCTestFixture(t)
+	defer fixture.closer()
+	ctx := context.Background()
+
+	_, err := fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
+		ProjectId: validProjectID, Title: "Sprint mal formado", SprintId: "sprint-1",
+	})
+	requireCode(t, err, codes.InvalidArgument, `sprint_id must be a valid UUID, got "sprint-1"`)
+	assert.Empty(t, fixture.repo.Sequences, "rejected before reserving an issue number")
+
+	sprintID := "44444444-4444-4444-8444-444444444444"
+	resp, err := fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
+		ProjectId: validProjectID, Title: "Sprint válido", SprintId: sprintID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, sprintID, resp.GetIssue().GetSprintId())
+}
+
+func TestGRPCHandler_ListIssues_ProjectID_MustBeUUIDWhenProvided(t *testing.T) {
+	fixture := setupGRPCTestFixture(t)
+	defer fixture.closer()
+	ctx := context.Background()
+
+	_, err := fixture.client.ListIssues(ctx, &issuesv1.ListIssuesRequest{ProjectId: "p1"})
+	requireCode(t, err, codes.InvalidArgument, `project_id must be a valid UUID, got "p1"`)
+
+	_, err = fixture.client.ListIssues(ctx, &issuesv1.ListIssuesRequest{ProjectId: "  " + validProjectID + "  "})
+	require.NoError(t, err, "surrounding spaces are trimmed")
+
+	_, err = fixture.client.ListIssues(ctx, &issuesv1.ListIssuesRequest{})
+	require.NoError(t, err, "an empty project_id still lists across projects")
+}

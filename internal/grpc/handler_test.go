@@ -175,13 +175,14 @@ func TestGRPCHandler_ListIssues_Success(t *testing.T) {
 	defer fixture.closer()
 
 	ctx := context.Background()
-	i1, _ := domain.NewIssue("p1", "PROJ-1", "Issue 1", "", domain.IssuePriorityLow, domain.IssueTypeStory, 1, "")
-	i2, _ := domain.NewIssue("p1", "PROJ-2", "Issue 2", "", domain.IssuePriorityLow, domain.IssueTypeStory, 2, "")
+	const listProjectID = "33333333-3333-4333-8333-333333333333"
+	i1, _ := domain.NewIssue(listProjectID, "PROJ-1", "Issue 1", "", domain.IssuePriorityLow, domain.IssueTypeStory, 1, "")
+	i2, _ := domain.NewIssue(listProjectID, "PROJ-2", "Issue 2", "", domain.IssuePriorityLow, domain.IssueTypeStory, 2, "")
 	_ = fixture.repo.Create(ctx, i1)
 	_ = fixture.repo.Create(ctx, i2)
 
 	resp, err := fixture.client.ListIssues(ctx, &issuesv1.ListIssuesRequest{
-		ProjectId: "p1",
+		ProjectId: listProjectID,
 		Limit:     10,
 		Offset:    0,
 	})
