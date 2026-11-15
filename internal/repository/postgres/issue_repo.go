@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -251,43 +252,30 @@ func (r *issueRepo) List(ctx context.Context, filter repository.ListFilter) ([]*
 	return issues, totalCount, nil
 }
 
-func (r *issueRepo) Update(ctx context.Context, issue *domain.Issue) error {
-	query := `
+// UpdateStatus changes only the status column, guarded by the version that was read. It never
+// rewrites other columns, so a concurrent sprint assignment cannot be undone by a status change.
+func (r *issueRepo) UpdateStatus(ctx context.Context, issue *domain.Issue, expectedVersion int) error {
+	const query = `
 		UPDATE issues
-		SET title = $1, description = $2, status = $3, priority = $4,
-		    type = $5, story_points = $6, sprint_id = $7, assignee_id = $8,
-		    reporter_id = $9, acceptance_criteria = $10, version = version + 1,
-		    updated_at = NOW()
-		WHERE id = $11
+		SET status = $1, version = version + 1, updated_at = NOW()
+		WHERE id = $2 AND version = $3
 		RETURNING version, updated_at;
 	`
-	var sprintIDNull, assigneeNull, reporterNull sql.NullString
-	if issue.SprintID != nil && *issue.SprintID != "" {
-		sprintIDNull = sql.NullString{String: *issue.SprintID, Valid: true}
-	}
-	if issue.AssigneeID != nil && *issue.AssigneeID != "" {
-		assigneeNull = sql.NullString{String: *issue.AssigneeID, Valid: true}
-	}
-	if issue.ReporterID != nil && *issue.ReporterID != "" {
-		reporterNull = sql.NullString{String: *issue.ReporterID, Valid: true}
+	err := r.db.QueryRowContext(ctx, query, issue.Status.String(), issue.ID, expectedVersion).
+		Scan(&issue.Version, &issue.UpdatedAt)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return MapPgError(err)
 	}
 
-	err := r.db.QueryRowContext(
-		ctx, query,
-		issue.Title,
-		issue.Description,
-		issue.Status.String(),
-		issue.Priority.String(),
-		issue.Type.String(),
-		issue.StoryPoints,
-		sprintIDNull,
-		assigneeNull,
-		reporterNull,
-		issue.AcceptanceCriteria,
-		issue.ID,
-	).Scan(&issue.Version, &issue.UpdatedAt)
-
-	return MapPgError(err)
+	// No row matched: either the issue is gone or its version moved on.
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM issues WHERE id = $1)`, issue.ID).Scan(&exists); err != nil {
+		return MapPgError(err)
+	}
+	if !exists {
+		return domain.ErrNotFound
+	}
+	return domain.ErrVersionConflict
 }
 
 func (r *issueRepo) BatchUpdateSprint(ctx context.Context, ids []string, sprintID string) ([]*domain.Issue, error) {

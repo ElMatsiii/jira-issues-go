@@ -465,6 +465,28 @@ func TestGRPCHandler_UpdateIssueStatus_UnexpectedRepoError_Internal(t *testing.T
 	assert.Contains(t, st.Message(), "failed to update issue status")
 }
 
+func TestGRPCHandler_UpdateIssueStatus_VersionConflict_Aborted(t *testing.T) {
+	fixture := setupGRPCTestFixture(t)
+	defer fixture.closer()
+
+	ctx := context.Background()
+	issue, _ := domain.NewIssue("p1", "PROJ-1", "Conflicto", "", domain.IssuePriorityHigh, domain.IssueTypeTask, 2, "")
+	_ = fixture.repo.Create(ctx, issue)
+
+	fixture.repo.BeforeUpdateStatus = func(stored *domain.Issue) { stored.Version++ } // always outpaced
+	defer func() { fixture.repo.BeforeUpdateStatus = nil }()
+
+	_, err := fixture.client.UpdateIssueStatus(ctx, &issuesv1.UpdateIssueStatusRequest{
+		Id:     issue.ID,
+		Status: issuesv1.IssueStatus_ISSUE_STATUS_IN_PROGRESS,
+	})
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.Aborted, st.Code(), "a version conflict is retryable: Aborted, not Internal")
+	assert.Contains(t, st.Message(), "changed while updating its status")
+}
+
 func TestGRPCHandler_UpdateIssueStatus_OutOfRangeStatus_InvalidArgument(t *testing.T) {
 	fixture := setupGRPCTestFixture(t)
 	defer fixture.closer()

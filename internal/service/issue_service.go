@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -115,29 +116,42 @@ func (s *issueService) ListIssues(ctx context.Context, filter repository.ListFil
 	return s.repo.List(ctx, filter)
 }
 
+// maxStatusUpdateAttempts bounds the optimistic-concurrency retries of UpdateIssueStatus.
+const maxStatusUpdateAttempts = 3
+
+// UpdateIssueStatus writes only status/version (never the whole row), guarded by the version that
+// was read. If another write happened in between (e.g. a sprint assignment, which also bumps the
+// version), it re-reads the issue, re-validates the transition and retries.
 func (s *issueService) UpdateIssueStatus(ctx context.Context, id string, newStatus domain.Status) (*domain.Issue, error) {
-	issue, err := s.repo.GetByIDOrKey(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if issue == nil {
-		return nil, domain.ErrNotFound
-	}
+	for attempt := 1; ; attempt++ {
+		current, err := s.repo.GetByIDOrKey(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if current == nil {
+			return nil, domain.ErrNotFound
+		}
 
-	prevStatus := issue.Status
-	if err := issue.TransitionTo(newStatus); err != nil {
-		return nil, err
-	}
+		// Work on a copy so the version read stays intact for the guarded update.
+		next := *current
+		prevStatus := current.Status
+		if err := next.TransitionTo(newStatus); err != nil {
+			return nil, err
+		}
 
-	if err := s.repo.Update(ctx, issue); err != nil {
-		return nil, err
-	}
+		err = s.repo.UpdateStatus(ctx, &next, current.Version)
+		if errors.Is(err, domain.ErrVersionConflict) && attempt < maxStatusUpdateAttempts {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
 
-	if s.producer != nil {
-		logPublishError("ISSUE_STATUS_CHANGED", issue, s.producer.PublishIssueStatusChanged(ctx, issue, prevStatus))
+		if s.producer != nil {
+			logPublishError("ISSUE_STATUS_CHANGED", &next, s.producer.PublishIssueStatusChanged(ctx, &next, prevStatus))
+		}
+		return &next, nil
 	}
-
-	return issue, nil
 }
 
 func (s *issueService) BatchUpdateIssueSprint(ctx context.Context, ids []string, sprintID string) ([]*domain.Issue, int32, error) {

@@ -14,4 +14,6 @@ var (
 	ErrNegativeStoryPoints     = errors.New("story points cannot be negative")
 	ErrProjectNotFound         = errors.New("project not found")
 	ErrEmptyIssueIDs           = errors.New("issue IDs cannot be empty")
+	// ErrVersionConflict means the issue changed after it was read (optimistic concurrency).
+	ErrVersionConflict = errors.New("issue was modified concurrently, retry the operation")
 )

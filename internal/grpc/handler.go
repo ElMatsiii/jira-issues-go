@@ -195,6 +195,9 @@ func (s *Server) UpdateIssueStatus(ctx context.Context, req *issuesv1.UpdateIssu
 		if errors.Is(err, domain.ErrInvalidStatus) {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid status: %v", err)
 		}
+		if errors.Is(err, domain.ErrVersionConflict) {
+			return nil, status.Errorf(codes.Aborted, "issue %q changed while updating its status, retry: %v", id, err)
+		}
 		return nil, status.Errorf(codes.Internal, "failed to update issue status: %v", err)
 	}
 	if updated == nil {

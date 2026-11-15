@@ -24,7 +24,10 @@ type IssueRepository interface {
 	GetByKey(ctx context.Context, key string) (*domain.Issue, error)
 	GetByIDOrKey(ctx context.Context, idOrKey string) (*domain.Issue, error)
 	List(ctx context.Context, filter ListFilter) ([]*domain.Issue, int32, error)
-	Update(ctx context.Context, issue *domain.Issue) error
+	// UpdateStatus persists only issue.Status (plus version/updated_at) when the stored version
+	// still equals expectedVersion; otherwise it returns domain.ErrVersionConflict (or
+	// domain.ErrNotFound). On success it sets issue.Version and issue.UpdatedAt from the database.
+	UpdateStatus(ctx context.Context, issue *domain.Issue, expectedVersion int) error
 	BatchUpdateSprint(ctx context.Context, ids []string, sprintID string) ([]*domain.Issue, error)
 	GetNextSequence(ctx context.Context, projectID string) (int64, string, error)
 }
