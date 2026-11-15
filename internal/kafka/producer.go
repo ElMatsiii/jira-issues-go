@@ -88,8 +88,9 @@ func (p *kafkaProducer) PublishIssueEvent(ctx context.Context, envelope *IssueEv
 		return fmt.Errorf("failed to marshal issue event envelope: %w", err)
 	}
 
+	// The topic is set on the kafka.Writer (see NewEventProducer). kafka-go rejects a message that
+	// also sets it ("Topic must not be specified for both Writer and Message"), so Topic stays empty.
 	msg := kafka.Message{
-		Topic: p.topic,
 		Key:   []byte(envelope.AggregateID),
 		Value: payloadBytes,
 		Time:  time.Now().UTC(),

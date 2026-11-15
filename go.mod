@@ -7,6 +7,7 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/segmentio/kafka-go v0.4.47
 	github.com/stretchr/testify v1.9.0
+	golang.org/x/crypto v0.23.0
 	google.golang.org/grpc v1.65.0
 	jira-contracts v0.0.0
 )

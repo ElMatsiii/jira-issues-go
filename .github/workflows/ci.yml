@@ -40,10 +40,15 @@ jobs:
           cache: true
           cache-dependency-path: jira-issues-go/go.sum
 
+      # `go mod verify` cannot be used here: jira-contracts is a local module (replace => ../jira-contracts)
+      # whose path has no dot, so Go cannot map it to a module-cache entry and always fails with
+      # "jira-contracts v0.0.0: missing ziphash". Instead, `go mod download` checks every downloaded
+      # module against go.sum, and `go mod tidy` + git diff fails if go.mod/go.sum are not up to date.
       - name: Verify Module Dependencies
         run: |
           go mod download
-          go mod verify
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
 
       - name: Run Unit Tests with Coverage Profile
         run: |

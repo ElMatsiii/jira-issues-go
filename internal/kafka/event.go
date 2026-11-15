@@ -36,6 +36,7 @@ type IssueEventPayload struct {
 	Key                string  `json:"key"`
 	ProjectID          string  `json:"projectId"`
 	SprintID           *string `json:"sprintId,omitempty"`
+	ParentID           *string `json:"parentId,omitempty"`
 	Title              string  `json:"title"`
 	Description        string  `json:"description,omitempty"`
 	Status             string  `json:"status"`
@@ -78,6 +79,7 @@ func NewIssueEnvelope(eventType EventType, issue *domain.Issue, prevStatus *doma
 			Key:                issue.Key,
 			ProjectID:          issue.ProjectID,
 			SprintID:           issue.SprintID,
+			ParentID:           issue.ParentID,
 			Title:              issue.Title,
 			Description:        issue.Description,
 			Status:             issue.Status.String(),

@@ -16,6 +16,8 @@ type Project struct {
 	IssueCounter int       `json:"issueCounter" db:"issue_counter"`
 	CreatedAt    time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt    time.Time `json:"updatedAt" db:"updated_at"`
+	// WorkspaceID comes from app_projects; empty when the project was read without its workspace.
+	WorkspaceID string `json:"workspaceId,omitempty" db:"workspace_id"`
 }
 
 // NewProject constructs a validated Project entity.

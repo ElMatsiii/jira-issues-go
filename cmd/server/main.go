@@ -21,6 +21,7 @@ import (
 	grpchandler "jira-issues-go/internal/grpc"
 	"jira-issues-go/internal/kafka"
 	"jira-issues-go/internal/repository/postgres"
+	"jira-issues-go/internal/service"
 )
 
 func main() {
@@ -64,8 +65,13 @@ func main() {
 
 	// 4. Initialize gRPC Server
 	grpcHandler := grpchandler.NewServer(repo, producer)
+	identitySvc := service.NewIdentityService(postgres.NewIdentityRepository(db))
 	grpcServer := grpc.NewServer()
 	issuesv1.RegisterIssueServiceServer(grpcServer, grpcHandler)
+	issuesv1.RegisterIdentityServiceServer(grpcServer, grpchandler.NewIdentityServer(identitySvc))
+	issuesv1.RegisterProjectServiceServer(grpcServer, grpchandler.NewProjectServer(identitySvc))
+	workLogSvc := service.NewWorkLogService(postgres.NewWorkLogRepository(db), repo, identitySvc)
+	issuesv1.RegisterWorkLogServiceServer(grpcServer, grpchandler.NewWorkLogServer(workLogSvc))
 	reflection.Register(grpcServer)
 
 	// 5. Bind TCP Listener

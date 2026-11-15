@@ -76,7 +76,7 @@ func TestGRPCHandler_CreateIssue_Success(t *testing.T) {
 
 	ctx := context.Background()
 	resp, err := fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId:          "proj-uuid-1",
+		ProjectId:          "11111111-1111-4111-8111-111111111111",
 		Title:              "gRPC Wire Test Issue",
 		Description:        "Testing over bufconn",
 		Priority:           issuesv1.IssuePriority_ISSUE_PRIORITY_HIGH,
@@ -102,7 +102,7 @@ func TestGRPCHandler_CreateIssue_InvalidArgument(t *testing.T) {
 
 	// Missing title
 	_, err := fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId: "proj-uuid-1",
+		ProjectId: "11111111-1111-4111-8111-111111111111",
 		Title:     "",
 	})
 	require.Error(t, err)
@@ -122,7 +122,7 @@ func TestGRPCHandler_CreateIssue_InvalidArgument(t *testing.T) {
 
 	// Negative story points
 	_, err = fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId:   "proj-uuid-1",
+		ProjectId:   "11111111-1111-4111-8111-111111111111",
 		Title:       "Valid Title",
 		StoryPoints: -1,
 	})
@@ -175,13 +175,14 @@ func TestGRPCHandler_ListIssues_Success(t *testing.T) {
 	defer fixture.closer()
 
 	ctx := context.Background()
-	i1, _ := domain.NewIssue("p1", "PROJ-1", "Issue 1", "", domain.IssuePriorityLow, domain.IssueTypeStory, 1, "")
-	i2, _ := domain.NewIssue("p1", "PROJ-2", "Issue 2", "", domain.IssuePriorityLow, domain.IssueTypeStory, 2, "")
+	const listProjectID = "33333333-3333-4333-8333-333333333333"
+	i1, _ := domain.NewIssue(listProjectID, "PROJ-1", "Issue 1", "", domain.IssuePriorityLow, domain.IssueTypeStory, 1, "")
+	i2, _ := domain.NewIssue(listProjectID, "PROJ-2", "Issue 2", "", domain.IssuePriorityLow, domain.IssueTypeStory, 2, "")
 	_ = fixture.repo.Create(ctx, i1)
 	_ = fixture.repo.Create(ctx, i2)
 
 	resp, err := fixture.client.ListIssues(ctx, &issuesv1.ListIssuesRequest{
-		ProjectId: "p1",
+		ProjectId: listProjectID,
 		Limit:     10,
 		Offset:    0,
 	})
@@ -348,7 +349,7 @@ func TestGRPCHandler_CreateIssue_UnexpectedRepoError_Internal(t *testing.T) {
 	defer func() { fixture.repo.CreateErr = nil }()
 
 	_, err := fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId: "proj-uuid-1",
+		ProjectId: "11111111-1111-4111-8111-111111111111",
 		Title:     "New Task",
 	})
 	require.Error(t, err)
@@ -367,7 +368,7 @@ func TestGRPCHandler_CreateIssue_BoundaryValidation(t *testing.T) {
 	// Title exceeding 255 characters
 	longTitle := strings.Repeat("A", 256)
 	_, err := fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId: "proj-uuid-1",
+		ProjectId: "11111111-1111-4111-8111-111111111111",
 		Title:     longTitle,
 	})
 	require.Error(t, err)
@@ -378,7 +379,7 @@ func TestGRPCHandler_CreateIssue_BoundaryValidation(t *testing.T) {
 
 	// Whitespace-only title
 	_, err = fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId: "proj-uuid-1",
+		ProjectId: "11111111-1111-4111-8111-111111111111",
 		Title:     "   \t\n",
 	})
 	require.Error(t, err)
@@ -398,7 +399,7 @@ func TestGRPCHandler_CreateIssue_BoundaryValidation(t *testing.T) {
 
 	// Negative story points (-100)
 	_, err = fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId:   "proj-uuid-1",
+		ProjectId:   "11111111-1111-4111-8111-111111111111",
 		Title:       "Valid Title",
 		StoryPoints: -100,
 	})
@@ -434,7 +435,7 @@ func TestGRPCHandler_ListIssues_UnexpectedRepoError_Internal(t *testing.T) {
 	defer func() { fixture.repo.ListErr = nil }()
 
 	_, err := fixture.client.ListIssues(ctx, &issuesv1.ListIssuesRequest{
-		ProjectId: "proj-uuid-1",
+		ProjectId: "11111111-1111-4111-8111-111111111111",
 	})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -463,6 +464,28 @@ func TestGRPCHandler_UpdateIssueStatus_UnexpectedRepoError_Internal(t *testing.T
 	require.True(t, ok)
 	assert.Equal(t, codes.Internal, st.Code(), "Unexpected repo error on UpdateIssueStatus must return codes.Internal")
 	assert.Contains(t, st.Message(), "failed to update issue status")
+}
+
+func TestGRPCHandler_UpdateIssueStatus_VersionConflict_Aborted(t *testing.T) {
+	fixture := setupGRPCTestFixture(t)
+	defer fixture.closer()
+
+	ctx := context.Background()
+	issue, _ := domain.NewIssue("p1", "PROJ-1", "Conflicto", "", domain.IssuePriorityHigh, domain.IssueTypeTask, 2, "")
+	_ = fixture.repo.Create(ctx, issue)
+
+	fixture.repo.BeforeUpdateStatus = func(stored *domain.Issue) { stored.Version++ } // always outpaced
+	defer func() { fixture.repo.BeforeUpdateStatus = nil }()
+
+	_, err := fixture.client.UpdateIssueStatus(ctx, &issuesv1.UpdateIssueStatusRequest{
+		Id:     issue.ID,
+		Status: issuesv1.IssueStatus_ISSUE_STATUS_IN_PROGRESS,
+	})
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.Aborted, st.Code(), "a version conflict is retryable: Aborted, not Internal")
+	assert.Contains(t, st.Message(), "changed while updating its status")
 }
 
 func TestGRPCHandler_UpdateIssueStatus_OutOfRangeStatus_InvalidArgument(t *testing.T) {
@@ -500,7 +523,7 @@ func TestGRPCHandler_UpdateIssueStatus_LifecycleMatrix(t *testing.T) {
 
 	ctx := context.Background()
 	created, err := fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId: "proj-matrix",
+		ProjectId: "22222222-2222-4222-8222-222222222222",
 		Title:     "Matrix Issue",
 	})
 	require.NoError(t, err)

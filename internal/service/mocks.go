@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"sync"
+	"time"
 
 	"jira-issues-go/internal/domain"
 	"jira-issues-go/internal/kafka"
@@ -21,6 +22,10 @@ type MockIssueRepository struct {
 	ListErr   error
 	BatchErr  error
 	SeqErr    error
+	// BeforeUpdateStatus runs inside UpdateStatus before the version check; tests use it to
+	// simulate a concurrent write (for example a sprint assignment) between read and update.
+	BeforeUpdateStatus func(stored *domain.Issue)
+	UpdateStatusCalls  int
 }
 
 func NewMockIssueRepository() *MockIssueRepository {
@@ -125,6 +130,33 @@ func (m *MockIssueRepository) Update(ctx context.Context, issue *domain.Issue) e
 	return nil
 }
 
+// UpdateStatus mirrors the Postgres implementation: only status/version/updated_at change, and
+// only when the stored version equals expectedVersion.
+func (m *MockIssueRepository) UpdateStatus(ctx context.Context, issue *domain.Issue, expectedVersion int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.UpdateStatusCalls++
+	if m.UpdateErr != nil {
+		return m.UpdateErr
+	}
+	stored, exists := m.Issues[issue.ID]
+	if !exists {
+		return domain.ErrNotFound
+	}
+	if m.BeforeUpdateStatus != nil {
+		m.BeforeUpdateStatus(stored)
+	}
+	if stored.Version != expectedVersion {
+		return domain.ErrVersionConflict
+	}
+	stored.Status = issue.Status
+	stored.Version++
+	stored.UpdatedAt = time.Now().UTC()
+	issue.Version = stored.Version
+	issue.UpdatedAt = stored.UpdatedAt
+	return nil
+}
+
 func (m *MockIssueRepository) BatchUpdateSprint(ctx context.Context, ids []string, sprintID string) ([]*domain.Issue, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -142,6 +174,7 @@ func (m *MockIssueRepository) BatchUpdateSprint(ctx context.Context, ids []strin
 				sID = &s
 			}
 			issue.SprintID = sID
+			issue.Version++ // like Postgres: sprint assignment bumps the version
 			updated = append(updated, issue)
 		}
 	}

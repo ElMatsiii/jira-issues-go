@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,20 @@ import (
 	"jira-issues-go/internal/domain"
 	"jira-issues-go/internal/repository"
 )
+
+// reporterNameColumn is the name of the user in reporter_id (empty when unknown). reporter_id is a
+// VARCHAR, so it is compared as text: a value that is not a user id simply has no name.
+const reporterNameColumn = `COALESCE((SELECT u.name FROM app_users u WHERE u.id::text = issues.reporter_id), '')`
+
+// issueColumns is the column list read by every query; scanIssue reads them in this order.
+const issueColumns = `id, key, project_id, title, description, status, priority,
+		       type, story_points, sprint_id, assignee_id, reporter_id,
+		       acceptance_criteria, version, created_at, updated_at, parent_id, ` + reporterNameColumn
+
+// rowScanner is implemented by *sql.Row and *sql.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
 
 type issueRepo struct {
 	db *sql.DB
@@ -37,6 +52,14 @@ func (r *issueRepo) GetNextSequence(ctx context.Context, projectID string) (int6
 	return counter, keyPrefix, nil
 }
 
+// nullableString maps nil or blank values to SQL NULL.
+func nullableString(value *string) sql.NullString {
+	if value == nil || *value == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: *value, Valid: true}
+}
+
 func (r *issueRepo) Create(ctx context.Context, issue *domain.Issue) error {
 	if issue.ID == "" {
 		issue.ID = uuid.New().String()
@@ -55,25 +78,12 @@ func (r *issueRepo) Create(ctx context.Context, issue *domain.Issue) error {
 		INSERT INTO issues (
 			id, key, project_id, title, description, status, priority,
 			type, story_points, sprint_id, assignee_id, reporter_id,
-			acceptance_criteria, version, created_at, updated_at
+			acceptance_criteria, version, created_at, updated_at, parent_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
 		)
-		RETURNING created_at, updated_at;
+		RETURNING created_at, updated_at, ` + reporterNameColumn + `;
 	`
-
-	var sprintIDNull sql.NullString
-	if issue.SprintID != nil && *issue.SprintID != "" {
-		sprintIDNull = sql.NullString{String: *issue.SprintID, Valid: true}
-	}
-	var assigneeNull sql.NullString
-	if issue.AssigneeID != nil && *issue.AssigneeID != "" {
-		assigneeNull = sql.NullString{String: *issue.AssigneeID, Valid: true}
-	}
-	var reporterNull sql.NullString
-	if issue.ReporterID != nil && *issue.ReporterID != "" {
-		reporterNull = sql.NullString{String: *issue.ReporterID, Valid: true}
-	}
 
 	now := time.Now().UTC()
 	if issue.CreatedAt.IsZero() {
@@ -97,38 +107,27 @@ func (r *issueRepo) Create(ctx context.Context, issue *domain.Issue) error {
 		issue.Priority.String(),
 		issue.Type.String(),
 		issue.StoryPoints,
-		sprintIDNull,
-		assigneeNull,
-		reporterNull,
+		nullableString(issue.SprintID),
+		nullableString(issue.AssigneeID),
+		nullableString(issue.ReporterID),
 		issue.AcceptanceCriteria,
 		issue.Version,
 		issue.CreatedAt,
 		issue.UpdatedAt,
-	).Scan(&issue.CreatedAt, &issue.UpdatedAt)
+		nullableString(issue.ParentID),
+	).Scan(&issue.CreatedAt, &issue.UpdatedAt, &issue.ReporterName)
 
 	return MapPgError(err)
 }
 
 func (r *issueRepo) GetByID(ctx context.Context, id string) (*domain.Issue, error) {
-	query := `
-		SELECT id, key, project_id, title, description, status, priority,
-		       type, story_points, sprint_id, assignee_id, reporter_id,
-		       acceptance_criteria, version, created_at, updated_at
-		FROM issues
-		WHERE id = $1;
-	`
-	return r.scanRow(r.db.QueryRowContext(ctx, query, id))
+	query := `SELECT ` + issueColumns + ` FROM issues WHERE id = $1;`
+	return scanIssue(r.db.QueryRowContext(ctx, query, id))
 }
 
 func (r *issueRepo) GetByKey(ctx context.Context, key string) (*domain.Issue, error) {
-	query := `
-		SELECT id, key, project_id, title, description, status, priority,
-		       type, story_points, sprint_id, assignee_id, reporter_id,
-		       acceptance_criteria, version, created_at, updated_at
-		FROM issues
-		WHERE key = $1;
-	`
-	return r.scanRow(r.db.QueryRowContext(ctx, query, key))
+	query := `SELECT ` + issueColumns + ` FROM issues WHERE key = $1;`
+	return scanIssue(r.db.QueryRowContext(ctx, query, key))
 }
 
 func (r *issueRepo) GetByIDOrKey(ctx context.Context, idOrKey string) (*domain.Issue, error) {
@@ -177,15 +176,13 @@ func (r *issueRepo) List(ctx context.Context, filter repository.ListFilter) ([]*
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, key, project_id, title, description, status, priority,
-		       type, story_points, sprint_id, assignee_id, reporter_id,
-		       acceptance_criteria, version, created_at, updated_at,
+		SELECT %s,
 		       COUNT(*) OVER() AS total_count
 		FROM issues
 		%s
 		ORDER BY created_at DESC
 		LIMIT $%d OFFSET $%d;
-	`, whereClause, idx, idx+1)
+	`, issueColumns, whereClause, idx, idx+1)
 
 	args = append(args, limit, offset)
 
@@ -199,49 +196,13 @@ func (r *issueRepo) List(ctx context.Context, filter repository.ListFilter) ([]*
 	var totalCount int32
 
 	for rows.Next() {
-		var issue domain.Issue
-		var statusStr, priorityStr, typeStr string
-		var sprintNull, assigneeNull, reporterNull sql.NullString
 		var tc int32
-
-		err := rows.Scan(
-			&issue.ID,
-			&issue.Key,
-			&issue.ProjectID,
-			&issue.Title,
-			&issue.Description,
-			&statusStr,
-			&priorityStr,
-			&typeStr,
-			&issue.StoryPoints,
-			&sprintNull,
-			&assigneeNull,
-			&reporterNull,
-			&issue.AcceptanceCriteria,
-			&issue.Version,
-			&issue.CreatedAt,
-			&issue.UpdatedAt,
-			&tc,
-		)
+		issue, err := scanIssue(rows, &tc)
 		if err != nil {
-			return nil, 0, MapPgError(err)
+			return nil, 0, err
 		}
-
-		issue.Status = domain.ParseStatus(statusStr)
-		issue.Priority = domain.ParsePriority(priorityStr)
-		issue.Type = domain.ParseType(typeStr)
-		if sprintNull.Valid {
-			issue.SprintID = &sprintNull.String
-		}
-		if assigneeNull.Valid {
-			issue.AssigneeID = &assigneeNull.String
-		}
-		if reporterNull.Valid {
-			issue.ReporterID = &reporterNull.String
-		}
-
 		totalCount = tc
-		issues = append(issues, &issue)
+		issues = append(issues, issue)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -251,43 +212,30 @@ func (r *issueRepo) List(ctx context.Context, filter repository.ListFilter) ([]*
 	return issues, totalCount, nil
 }
 
-func (r *issueRepo) Update(ctx context.Context, issue *domain.Issue) error {
-	query := `
+// UpdateStatus changes only the status column, guarded by the version that was read. It never
+// rewrites other columns, so a concurrent sprint assignment cannot be undone by a status change.
+func (r *issueRepo) UpdateStatus(ctx context.Context, issue *domain.Issue, expectedVersion int) error {
+	const query = `
 		UPDATE issues
-		SET title = $1, description = $2, status = $3, priority = $4,
-		    type = $5, story_points = $6, sprint_id = $7, assignee_id = $8,
-		    reporter_id = $9, acceptance_criteria = $10, version = version + 1,
-		    updated_at = NOW()
-		WHERE id = $11
+		SET status = $1, version = version + 1, updated_at = NOW()
+		WHERE id = $2 AND version = $3
 		RETURNING version, updated_at;
 	`
-	var sprintIDNull, assigneeNull, reporterNull sql.NullString
-	if issue.SprintID != nil && *issue.SprintID != "" {
-		sprintIDNull = sql.NullString{String: *issue.SprintID, Valid: true}
-	}
-	if issue.AssigneeID != nil && *issue.AssigneeID != "" {
-		assigneeNull = sql.NullString{String: *issue.AssigneeID, Valid: true}
-	}
-	if issue.ReporterID != nil && *issue.ReporterID != "" {
-		reporterNull = sql.NullString{String: *issue.ReporterID, Valid: true}
+	err := r.db.QueryRowContext(ctx, query, issue.Status.String(), issue.ID, expectedVersion).
+		Scan(&issue.Version, &issue.UpdatedAt)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return MapPgError(err)
 	}
 
-	err := r.db.QueryRowContext(
-		ctx, query,
-		issue.Title,
-		issue.Description,
-		issue.Status.String(),
-		issue.Priority.String(),
-		issue.Type.String(),
-		issue.StoryPoints,
-		sprintIDNull,
-		assigneeNull,
-		reporterNull,
-		issue.AcceptanceCriteria,
-		issue.ID,
-	).Scan(&issue.Version, &issue.UpdatedAt)
-
-	return MapPgError(err)
+	// No row matched: either the issue is gone or its version moved on.
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM issues WHERE id = $1)`, issue.ID).Scan(&exists); err != nil {
+		return MapPgError(err)
+	}
+	if !exists {
+		return domain.ErrNotFound
+	}
+	return domain.ErrVersionConflict
 }
 
 func (r *issueRepo) BatchUpdateSprint(ctx context.Context, ids []string, sprintID string) ([]*domain.Issue, error) {
@@ -318,10 +266,8 @@ func (r *issueRepo) BatchUpdateSprint(ctx context.Context, ids []string, sprintI
 		UPDATE issues
 		SET sprint_id = $1, updated_at = NOW(), version = version + 1
 		WHERE id IN (%s)
-		RETURNING id, key, project_id, title, description, status, priority,
-		          type, story_points, sprint_id, assignee_id, reporter_id,
-		          acceptance_criteria, version, created_at, updated_at;
-	`, strings.Join(placeholders, ", "))
+		RETURNING %s;
+	`, strings.Join(placeholders, ", "), issueColumns)
 
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -331,44 +277,11 @@ func (r *issueRepo) BatchUpdateSprint(ctx context.Context, ids []string, sprintI
 
 	var updated []*domain.Issue
 	for rows.Next() {
-		var issue domain.Issue
-		var statusStr, priorityStr, typeStr string
-		var sNull, aNull, rNull sql.NullString
-
-		if err := rows.Scan(
-			&issue.ID,
-			&issue.Key,
-			&issue.ProjectID,
-			&issue.Title,
-			&issue.Description,
-			&statusStr,
-			&priorityStr,
-			&typeStr,
-			&issue.StoryPoints,
-			&sNull,
-			&aNull,
-			&rNull,
-			&issue.AcceptanceCriteria,
-			&issue.Version,
-			&issue.CreatedAt,
-			&issue.UpdatedAt,
-		); err != nil {
-			return nil, MapPgError(err)
+		issue, err := scanIssue(rows)
+		if err != nil {
+			return nil, err
 		}
-
-		issue.Status = domain.ParseStatus(statusStr)
-		issue.Priority = domain.ParsePriority(priorityStr)
-		issue.Type = domain.ParseType(typeStr)
-		if sNull.Valid {
-			issue.SprintID = &sNull.String
-		}
-		if aNull.Valid {
-			issue.AssigneeID = &aNull.String
-		}
-		if rNull.Valid {
-			issue.ReporterID = &rNull.String
-		}
-		updated = append(updated, &issue)
+		updated = append(updated, issue)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -382,12 +295,13 @@ func (r *issueRepo) BatchUpdateSprint(ctx context.Context, ids []string, sprintI
 	return updated, nil
 }
 
-func (r *issueRepo) scanRow(row *sql.Row) (*domain.Issue, error) {
+// scanIssue reads one row selected with issueColumns, followed by any extra columns.
+func scanIssue(row rowScanner, extra ...any) (*domain.Issue, error) {
 	var issue domain.Issue
 	var statusStr, priorityStr, typeStr string
-	var sprintNull, assigneeNull, reporterNull sql.NullString
+	var sprintNull, assigneeNull, reporterNull, parentNull sql.NullString
 
-	err := row.Scan(
+	dest := []any{
 		&issue.ID,
 		&issue.Key,
 		&issue.ProjectID,
@@ -404,23 +318,27 @@ func (r *issueRepo) scanRow(row *sql.Row) (*domain.Issue, error) {
 		&issue.Version,
 		&issue.CreatedAt,
 		&issue.UpdatedAt,
-	)
-	if err != nil {
+		&parentNull,
+		&issue.ReporterName,
+	}
+	if err := row.Scan(append(dest, extra...)...); err != nil {
 		return nil, MapPgError(err)
 	}
 
 	issue.Status = domain.ParseStatus(statusStr)
 	issue.Priority = domain.ParsePriority(priorityStr)
 	issue.Type = domain.ParseType(typeStr)
-	if sprintNull.Valid {
-		issue.SprintID = &sprintNull.String
-	}
-	if assigneeNull.Valid {
-		issue.AssigneeID = &assigneeNull.String
-	}
-	if reporterNull.Valid {
-		issue.ReporterID = &reporterNull.String
-	}
+	issue.SprintID = stringPtr(sprintNull)
+	issue.AssigneeID = stringPtr(assigneeNull)
+	issue.ReporterID = stringPtr(reporterNull)
+	issue.ParentID = stringPtr(parentNull)
 
 	return &issue, nil
+}
+
+func stringPtr(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	return &value.String
 }

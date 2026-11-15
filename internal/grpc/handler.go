@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -13,6 +14,19 @@ import (
 	"jira-issues-go/internal/repository"
 	"jira-issues-go/internal/service"
 )
+
+// validateOptionalUUID returns InvalidArgument when a non-empty identifier is not a UUID. Those
+// columns are UUID in Postgres, so a malformed value would otherwise fail as an opaque Internal error.
+func validateOptionalUUID(field, value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	if _, err := uuid.Parse(trimmed); err != nil {
+		return status.Errorf(codes.InvalidArgument, "%s must be a valid UUID, got %q", field, trimmed)
+	}
+	return nil
+}
 
 // CreateIssue handles creation of a new work item.
 func (s *Server) CreateIssue(ctx context.Context, req *issuesv1.CreateIssueRequest) (*issuesv1.CreateIssueResponse, error) {
@@ -29,15 +43,39 @@ func (s *Server) CreateIssue(ctx context.Context, req *issuesv1.CreateIssueReque
 	if projectID == "" {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
+	// projects.id is a UUID column: a malformed value would surface as an opaque Postgres error.
+	if _, err := uuid.Parse(projectID); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "project_id must be a valid UUID, got %q", projectID)
+	}
+
+	// UNSPECIFIED (0) means "not provided" and gets a default; any other unknown number is a client error
+	// (the proto converters would silently turn it into UNSPECIFIED and then MEDIUM/STORY).
+	if _, known := issuesv1.IssuePriority_name[int32(req.GetPriority())]; !known {
+		return nil, status.Errorf(codes.InvalidArgument, "unknown priority value %d", req.GetPriority())
+	}
+	if _, known := issuesv1.IssueType_name[int32(req.GetType())]; !known {
+		return nil, status.Errorf(codes.InvalidArgument, "unknown issue type value %d", req.GetType())
+	}
 
 	if req.GetStoryPoints() < 0 {
 		return nil, status.Error(codes.InvalidArgument, "story points cannot be negative")
 	}
 
-	var sprintID, assigneeID, reporterID *string
+	// issues.sprint_id is a UUID column (no FK: the sprint lives in MS2).
+	if err := validateOptionalUUID("sprint_id", req.GetSprintId()); err != nil {
+		return nil, err
+	}
+	if err := validateOptionalUUID("parent_id", req.GetParentId()); err != nil {
+		return nil, err
+	}
+
+	var sprintID, parentID, assigneeID, reporterID *string
 	if req.GetSprintId() != "" {
 		sid := req.GetSprintId()
 		sprintID = &sid
+	}
+	if pid := strings.TrimSpace(req.GetParentId()); pid != "" {
+		parentID = &pid
 	}
 	if req.GetAssigneeId() != "" {
 		aid := req.GetAssigneeId()
@@ -56,6 +94,7 @@ func (s *Server) CreateIssue(ctx context.Context, req *issuesv1.CreateIssueReque
 		Type:               domain.TypeFromProto(req.GetType()),
 		StoryPoints:        req.GetStoryPoints(),
 		SprintID:           sprintID,
+		ParentID:           parentID,
 		AssigneeID:         assigneeID,
 		ReporterID:         reporterID,
 		AcceptanceCriteria: req.GetAcceptanceCriteria(),
@@ -69,11 +108,15 @@ func (s *Server) CreateIssue(ctx context.Context, req *issuesv1.CreateIssueReque
 			errors.Is(err, domain.ErrTitleTooLong) ||
 			errors.Is(err, domain.ErrInvalidStatus) ||
 			errors.Is(err, domain.ErrInvalidPriority) ||
-			errors.Is(err, domain.ErrInvalidType) {
+			errors.Is(err, domain.ErrInvalidType) ||
+			errors.Is(err, domain.ErrInvalidParent) {
 			return nil, status.Errorf(codes.InvalidArgument, "validation error: %v", err)
 		}
 		if errors.Is(err, domain.ErrProjectNotFound) {
 			return nil, status.Errorf(codes.NotFound, "project not found: %v", err)
+		}
+		if errors.Is(err, domain.ErrParentNotFound) {
+			return nil, status.Errorf(codes.NotFound, "parent epic not found: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "failed to create issue: %v", err)
 	}
@@ -117,6 +160,11 @@ func (s *Server) GetIssue(ctx context.Context, req *issuesv1.GetIssueRequest) (*
 func (s *Server) ListIssues(ctx context.Context, req *issuesv1.ListIssuesRequest) (*issuesv1.ListIssuesResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request cannot be nil")
+	}
+
+	// An empty project_id lists across projects; a non-empty one must be a UUID (projects.id).
+	if err := validateOptionalUUID("project_id", req.GetProjectId()); err != nil {
+		return nil, err
 	}
 
 	limit := req.GetLimit()
@@ -194,6 +242,9 @@ func (s *Server) UpdateIssueStatus(ctx context.Context, req *issuesv1.UpdateIssu
 		}
 		if errors.Is(err, domain.ErrInvalidStatus) {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid status: %v", err)
+		}
+		if errors.Is(err, domain.ErrVersionConflict) {
+			return nil, status.Errorf(codes.Aborted, "issue %q changed while updating its status, retry: %v", id, err)
 		}
 		return nil, status.Errorf(codes.Internal, "failed to update issue status: %v", err)
 	}
