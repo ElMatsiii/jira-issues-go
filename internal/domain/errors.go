@@ -25,6 +25,9 @@ var (
 	ErrWorkspaceForbidden  = errors.New("not allowed in this workspace")
 	ErrProjectKeyTaken     = errors.New("project key already in use")
 	ErrProjectForbidden    = errors.New("no access to this project")
+	// ErrMemberNotRemovable: the OWNER and ADMINs reach every project through their workspace role.
+	ErrMemberNotRemovable    = errors.New("the OWNER and ADMINs reach every project through their workspace role and cannot be removed from one")
+	ErrProjectMemberNotFound = errors.New("user is not a member of this project")
 	// Work logs.
 	ErrInvalidWorkLog    = errors.New("invalid work log")
 	ErrIssueNotInProject = errors.New("issue not found in this project")

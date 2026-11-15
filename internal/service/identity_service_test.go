@@ -139,19 +139,31 @@ func TestCreateProject_RolesAndValidation(t *testing.T) {
 	assert.Len(t, repo.Projects, 1)
 }
 
-func TestListProjects_MembersOnlyNewestFirst(t *testing.T) {
+func TestListProjects_OwnerSeesAllAndMemberOnlyItsProjects(t *testing.T) {
 	ctx := context.Background()
 	svc := service.NewIdentityService(teamRepo())
-	_, err := svc.CreateProject(ctx, ownerID, workspaceID, "OLD", "Antiguo", "")
+	old, err := svc.CreateProject(ctx, ownerID, workspaceID, "OLD", "Antiguo", "")
 	require.NoError(t, err)
 	_, err = svc.CreateProject(ctx, ownerID, workspaceID, "NEW", "Nuevo", "")
 	require.NoError(t, err)
 
+	for _, manager := range []string{ownerID, adminID} {
+		projects, err := svc.ListProjects(ctx, manager, workspaceID)
+		require.NoError(t, err)
+		require.Len(t, projects, 2)
+		assert.Equal(t, "NEW", projects[0].Key, "newest first")
+	}
+
 	projects, err := svc.ListProjects(ctx, memberID, workspaceID)
 	require.NoError(t, err)
-	require.Len(t, projects, 2)
-	assert.Equal(t, "NEW", projects[0].Key)
-	assert.Equal(t, "OLD", projects[1].Key)
+	assert.Empty(t, projects, "a MEMBER sees no project until it is added to one")
+
+	_, err = svc.AddProjectMember(ctx, ownerID, old.ID, "member@example.com")
+	require.NoError(t, err)
+	projects, err = svc.ListProjects(ctx, memberID, workspaceID)
+	require.NoError(t, err)
+	require.Len(t, projects, 1)
+	assert.Equal(t, "OLD", projects[0].Key)
 
 	_, err = svc.ListProjects(ctx, outsiderID, workspaceID)
 	assert.ErrorIs(t, err, domain.ErrWorkspaceForbidden)
@@ -163,7 +175,18 @@ func TestCheckProjectAccess(t *testing.T) {
 	project, err := svc.CreateProject(ctx, ownerID, workspaceID, "WEB", "Portal", "")
 	require.NoError(t, err)
 
-	access, err := svc.CheckProjectAccess(ctx, memberID, project.ID)
+	access, err := svc.CheckProjectAccess(ctx, adminID, project.ID)
+	require.NoError(t, err)
+	assert.Equal(t, service.ProjectAccess{Allowed: true, Role: domain.RoleAdmin, WorkspaceID: workspaceID}, access,
+		"the OWNER and ADMINs reach every project")
+
+	access, err = svc.CheckProjectAccess(ctx, memberID, project.ID)
+	require.NoError(t, err)
+	assert.Equal(t, service.ProjectAccess{}, access, "a MEMBER not added to the project has no access")
+
+	_, err = svc.AddProjectMember(ctx, ownerID, project.ID, "member@example.com")
+	require.NoError(t, err)
+	access, err = svc.CheckProjectAccess(ctx, memberID, project.ID)
 	require.NoError(t, err)
 	assert.Equal(t, service.ProjectAccess{Allowed: true, Role: domain.RoleMember, WorkspaceID: workspaceID}, access)
 
@@ -201,4 +224,9 @@ func TestIdentityService_RepositoryFailuresAreReturned(t *testing.T) {
 	assert.ErrorIs(t, err, repo.Err)
 	_, err = svc.CheckProjectAccess(ctx, ownerID, workspaceID)
 	assert.ErrorIs(t, err, repo.Err)
+	_, err = svc.AddProjectMember(ctx, ownerID, workspaceID, "outsider@example.com")
+	assert.ErrorIs(t, err, repo.Err)
+	_, err = svc.ListProjectMembers(ctx, ownerID, workspaceID)
+	assert.ErrorIs(t, err, repo.Err)
+	assert.ErrorIs(t, svc.RemoveProjectMember(ctx, ownerID, workspaceID, memberID), repo.Err)
 }

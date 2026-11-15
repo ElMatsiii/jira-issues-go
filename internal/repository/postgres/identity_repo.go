@@ -159,13 +159,26 @@ func (r *identityRepo) CreateWorkspaceProject(ctx context.Context, project *doma
 	})
 }
 
-func (r *identityRepo) ListWorkspaceProjects(ctx context.Context, workspaceID string) ([]*domain.Project, error) {
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT p.id, ap.workspace_id, p.key, p.name, p.description, p.issue_counter, p.created_at, p.updated_at
+// projectSelect reads a workspace project; queryProjects scans the columns in this order.
+const projectSelect = `SELECT p.id, ap.workspace_id, p.key, p.name, p.description, p.issue_counter, p.created_at, p.updated_at
 		   FROM app_projects ap
-		   JOIN projects p ON p.id = ap.project_id
+		   JOIN projects p ON p.id = ap.project_id`
+
+func (r *identityRepo) ListWorkspaceProjects(ctx context.Context, workspaceID string) ([]*domain.Project, error) {
+	return r.queryProjects(ctx, projectSelect+`
 		  WHERE ap.workspace_id = $1
 		  ORDER BY p.created_at DESC, p.id`, workspaceID)
+}
+
+func (r *identityRepo) ListMemberProjects(ctx context.Context, workspaceID, userID string) ([]*domain.Project, error) {
+	return r.queryProjects(ctx, projectSelect+`
+		   JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
+		  WHERE ap.workspace_id = $1
+		  ORDER BY p.created_at DESC, p.id`, workspaceID, userID)
+}
+
+func (r *identityRepo) queryProjects(ctx context.Context, query string, args ...any) ([]*domain.Project, error) {
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
@@ -195,4 +208,66 @@ func (r *identityRepo) GetProjectWorkspaceID(ctx context.Context, projectID stri
 		return "", fmt.Errorf("read project workspace: %w", err)
 	}
 	return workspaceID, nil
+}
+
+func (r *identityRepo) IsProjectMember(ctx context.Context, projectID, userID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2)`, projectID, userID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("read project member: %w", err)
+	}
+	return exists, nil
+}
+
+func (r *identityRepo) AddProjectMember(ctx context.Context, projectID, userID string) error {
+	if _, err := r.db.ExecContext(ctx,
+		`INSERT INTO project_members (project_id, user_id) VALUES ($1, $2) ON CONFLICT (project_id, user_id) DO NOTHING`,
+		projectID, userID,
+	); err != nil {
+		return fmt.Errorf("add project member: %w", err)
+	}
+	return nil
+}
+
+func (r *identityRepo) RemoveProjectMember(ctx context.Context, projectID, userID string) (bool, error) {
+	result, err := r.db.ExecContext(ctx,
+		`DELETE FROM project_members WHERE project_id = $1 AND user_id = $2`, projectID, userID)
+	if err != nil {
+		return false, fmt.Errorf("remove project member: %w", err)
+	}
+	removed, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("remove project member: %w", err)
+	}
+	return removed > 0, nil
+}
+
+func (r *identityRepo) ListProjectMembers(ctx context.Context, projectID, workspaceID string) ([]*domain.ProjectMember, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT u.id, u.name, u.email, u.created_at, wm.role
+		   FROM workspace_members wm
+		   JOIN app_users u ON u.id = wm.user_id
+		   LEFT JOIN project_members pm ON pm.project_id = $1 AND pm.user_id = wm.user_id
+		  WHERE wm.workspace_id = $2
+		    AND (wm.role IN ('OWNER', 'ADMIN') OR pm.user_id IS NOT NULL)
+		  ORDER BY CASE wm.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 ELSE 2 END, u.name, u.id`,
+		projectID, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list project members: %w", err)
+	}
+	defer rows.Close()
+
+	members := []*domain.ProjectMember{}
+	for rows.Next() {
+		var user domain.User
+		var role string
+		if err := rows.Scan(&user.ID, &user.Name, &user.Email, &user.CreatedAt, &role); err != nil {
+			return nil, fmt.Errorf("scan project member: %w", err)
+		}
+		parsed := domain.ParseWorkspaceRole(role)
+		members = append(members, &domain.ProjectMember{User: &user, Role: parsed, Invited: !parsed.ReachesEveryProject()})
+	}
+	return members, rows.Err()
 }

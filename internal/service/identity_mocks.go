@@ -18,6 +18,8 @@ type MockIdentityRepository struct {
 	Workspaces map[string]*domain.Workspace    // by id (Role unused)
 	Members    map[string]domain.WorkspaceRole // by workspaceID + "/" + userID
 	Projects   map[string]*domain.Project      // by id
+	// ProjectMembers holds the invited members, by projectID + "/" + userID.
+	ProjectMembers map[string]bool
 	// Err, when set, is returned by every method (simulates a database failure).
 	Err   error
 	clock time.Time
@@ -25,11 +27,12 @@ type MockIdentityRepository struct {
 
 func NewMockIdentityRepository() *MockIdentityRepository {
 	return &MockIdentityRepository{
-		Users:      make(map[string]*domain.User),
-		Workspaces: make(map[string]*domain.Workspace),
-		Members:    make(map[string]domain.WorkspaceRole),
-		Projects:   make(map[string]*domain.Project),
-		clock:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		Users:          make(map[string]*domain.User),
+		Workspaces:     make(map[string]*domain.Workspace),
+		Members:        make(map[string]domain.WorkspaceRole),
+		Projects:       make(map[string]*domain.Project),
+		ProjectMembers: make(map[string]bool),
+		clock:          time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 }
 
@@ -187,4 +190,77 @@ func (m *MockIdentityRepository) GetProjectWorkspaceID(ctx context.Context, proj
 		return "", domain.ErrProjectNotFound
 	}
 	return project.WorkspaceID, nil
+}
+
+func (m *MockIdentityRepository) ListMemberProjects(ctx context.Context, workspaceID, userID string) ([]*domain.Project, error) {
+	all, err := m.ListWorkspaceProjects(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	projects := []*domain.Project{}
+	for _, project := range all {
+		if m.ProjectMembers[memberKey(project.ID, userID)] {
+			projects = append(projects, project)
+		}
+	}
+	return projects, nil
+}
+
+func (m *MockIdentityRepository) IsProjectMember(ctx context.Context, projectID, userID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Err != nil {
+		return false, m.Err
+	}
+	return m.ProjectMembers[memberKey(projectID, userID)], nil
+}
+
+func (m *MockIdentityRepository) AddProjectMember(ctx context.Context, projectID, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Err != nil {
+		return m.Err
+	}
+	m.ProjectMembers[memberKey(projectID, userID)] = true
+	return nil
+}
+
+func (m *MockIdentityRepository) RemoveProjectMember(ctx context.Context, projectID, userID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Err != nil {
+		return false, m.Err
+	}
+	key := memberKey(projectID, userID)
+	removed := m.ProjectMembers[key]
+	delete(m.ProjectMembers, key)
+	return removed, nil
+}
+
+func (m *MockIdentityRepository) ListProjectMembers(ctx context.Context, projectID, workspaceID string) ([]*domain.ProjectMember, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	order := map[domain.WorkspaceRole]int{domain.RoleOwner: 0, domain.RoleAdmin: 1, domain.RoleMember: 2}
+	members := []*domain.ProjectMember{}
+	for userID, user := range m.Users {
+		role, inWorkspace := m.Members[memberKey(workspaceID, userID)]
+		if !inWorkspace || (!role.ReachesEveryProject() && !m.ProjectMembers[memberKey(projectID, userID)]) {
+			continue
+		}
+		copied := *user
+		copied.PasswordHash = ""
+		members = append(members, &domain.ProjectMember{User: &copied, Role: role, Invited: !role.ReachesEveryProject()})
+	}
+	sort.Slice(members, func(i, j int) bool {
+		if order[members[i].Role] != order[members[j].Role] {
+			return order[members[i].Role] < order[members[j].Role]
+		}
+		return members[i].User.Name < members[j].User.Name
+	})
+	return members, nil
 }

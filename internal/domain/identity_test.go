@@ -99,6 +99,19 @@ func TestIdentityConverters(t *testing.T) {
 	project := domain.ProjectToProto(&domain.Project{ID: "p1", WorkspaceID: "w1", Key: "WEB", Name: "Portal", Description: "d", CreatedAt: created})
 	assert.Equal(t, &issuesv1.Project{Id: "p1", WorkspaceId: "w1", Key: "WEB", Name: "Portal", Description: "d", CreatedAt: created.UnixMilli()}, project)
 
+	member := domain.ProjectMemberToProto(&domain.ProjectMember{
+		User: &domain.User{ID: "u2", Name: "Beto", PasswordHash: "scrypt$a$b", CreatedAt: created}, Role: domain.RoleMember, Invited: true,
+	})
+	assert.Equal(t, &issuesv1.ProjectMember{
+		User:    &issuesv1.User{Id: "u2", Name: "Beto", CreatedAt: created.UnixMilli()},
+		Role:    issuesv1.WorkspaceRole_WORKSPACE_ROLE_MEMBER,
+		Invited: true,
+	}, member)
+	assert.Nil(t, domain.ProjectMemberToProto(nil))
+	assert.True(t, domain.RoleOwner.ReachesEveryProject())
+	assert.True(t, domain.RoleAdmin.ReachesEveryProject())
+	assert.False(t, domain.RoleMember.ReachesEveryProject())
+
 	assert.Nil(t, domain.UserToProto(nil))
 	assert.Nil(t, domain.WorkspaceToProto(nil))
 	assert.Nil(t, domain.ProjectToProto(nil))

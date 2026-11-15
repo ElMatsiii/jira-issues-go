@@ -54,6 +54,17 @@ type IdentityRepository interface {
 	ListWorkspaceProjects(ctx context.Context, workspaceID string) ([]*domain.Project, error)
 	// GetProjectWorkspaceID returns domain.ErrProjectNotFound when the project is not linked to a workspace.
 	GetProjectWorkspaceID(ctx context.Context, projectID string) (string, error)
+	// ListMemberProjects returns the workspace's projects the user was added to, newest first.
+	ListMemberProjects(ctx context.Context, workspaceID, userID string) ([]*domain.Project, error)
+	// IsProjectMember reports whether the user was added to the project (project_members).
+	IsProjectMember(ctx context.Context, projectID, userID string) (bool, error)
+	// AddProjectMember is idempotent.
+	AddProjectMember(ctx context.Context, projectID, userID string) error
+	// RemoveProjectMember returns false when the user was not a member of the project.
+	RemoveProjectMember(ctx context.Context, projectID, userID string) (bool, error)
+	// ListProjectMembers returns the OWNER, the ADMINs and the invited members of the project's
+	// workspace, in that order and by name.
+	ListProjectMembers(ctx context.Context, projectID, workspaceID string) ([]*domain.ProjectMember, error)
 }
 
 // WorkLogRepository stores hours logged per issue (table work_logs).

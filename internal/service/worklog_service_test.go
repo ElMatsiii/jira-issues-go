@@ -32,6 +32,7 @@ type workLogFixture struct {
 func newWorkLogFixture() *workLogFixture {
 	identity := teamRepo()
 	identity.Projects[wlProjectID] = &domain.Project{ID: wlProjectID, WorkspaceID: workspaceID, Key: "WEB"}
+	identity.ProjectMembers[wlProjectID+"/"+memberID] = true // memberID was invited to the project
 
 	issues := service.NewMockIssueRepository()
 	sprint := wlSprintID

@@ -38,6 +38,7 @@ func setupWorkLogFixture(t *testing.T) *workLogGRPCFixture {
 	identity := service.NewMockIdentityRepository()
 	identity.AddWorkspace(wlWorkspace, wlMember, domain.RoleMember)
 	identity.Projects[wlProject] = &domain.Project{ID: wlProject, WorkspaceID: wlWorkspace, Key: "WEB"}
+	identity.ProjectMembers[wlProject+"/"+wlMember] = true
 	issues := service.NewMockIssueRepository()
 	sprint := wlSprint
 	issues.Issues[wlIssue] = &domain.Issue{ID: wlIssue, Key: "WEB-1", ProjectID: wlProject, Title: "Login", SprintID: &sprint}

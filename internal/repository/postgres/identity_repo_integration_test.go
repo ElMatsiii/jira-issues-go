@@ -188,11 +188,23 @@ func TestIntegration_IdentityRepository_FullFlow(t *testing.T) {
 	_, err = svc.CreateProject(ctx, guest.ID, workspace.ID, "GST", "Invitado", "")
 	assert.ErrorIs(t, err, domain.ErrWorkspaceForbidden)
 
-	projects, err := svc.ListProjects(ctx, guest.ID, workspace.ID)
+	projects, err := svc.ListProjects(ctx, owner.ID, workspace.ID)
 	require.NoError(t, err)
 	require.Len(t, projects, 2)
 	assert.Equal(t, second.ID, projects[0].ID, "newest first")
 	assert.Equal(t, "Clientes", projects[1].Description)
+
+	// The guest is in the workspace but sees only the projects it is added to.
+	projects, err = svc.ListProjects(ctx, guest.ID, workspace.ID)
+	require.NoError(t, err)
+	assert.Empty(t, projects)
+	invited, err := svc.AddProjectMember(ctx, owner.ID, first.ID, "guest@example.com")
+	require.NoError(t, err)
+	assert.True(t, invited.Invited)
+	projects, err = svc.ListProjects(ctx, guest.ID, workspace.ID)
+	require.NoError(t, err)
+	require.Len(t, projects, 1)
+	assert.Equal(t, first.ID, projects[0].ID)
 
 	// The new project issues keys like any other MS1 project.
 	seq, prefix, err := postgres.NewIssueRepository(db).GetNextSequence(ctx, first.ID)
@@ -211,4 +223,67 @@ func TestIntegration_IdentityRepository_FullFlow(t *testing.T) {
 	access, err = svc.CheckProjectAccess(ctx, owner.ID, uuid.NewString())
 	require.NoError(t, err)
 	assert.False(t, access.Allowed)
+
+	// Project members: OWNER first, then invited members; the OWNER cannot be removed.
+	members, err := svc.ListProjectMembers(ctx, guest.ID, first.ID)
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+	assert.Equal(t, owner.ID, members[0].User.ID)
+	assert.False(t, members[0].Invited)
+	assert.Equal(t, guest.ID, members[1].User.ID)
+	assert.True(t, members[1].Invited)
+	assert.ErrorIs(t, svc.RemoveProjectMember(ctx, owner.ID, first.ID, owner.ID), domain.ErrMemberNotRemovable)
+	require.NoError(t, svc.RemoveProjectMember(ctx, owner.ID, first.ID, guest.ID))
+	assert.ErrorIs(t, svc.RemoveProjectMember(ctx, owner.ID, first.ID, guest.ID), domain.ErrProjectMemberNotFound)
+	access, err = svc.CheckProjectAccess(ctx, guest.ID, first.ID)
+	require.NoError(t, err)
+	assert.False(t, access.Allowed, "removed from the project")
+	role, err = repo.GetMemberRole(ctx, workspace.ID, guest.ID)
+	require.NoError(t, err)
+	assert.Equal(t, domain.RoleMember, role, "but still in the workspace")
+}
+
+func TestIntegration_ProjectMembersMigration_KeepsExistingMembersOnce(t *testing.T) {
+	db := openIsolatedSchema(t)
+	ctx := context.Background()
+	// issues_db before 000005: a workspace with an OWNER, a MEMBER and two projects.
+	require.NoError(t, postgres.RunMigrations(db, copyMigrations(t,
+		"000001_init_schema.up.sql", "000002_issue_parent.up.sql", "000003_identity_workspaces.up.sql", "000004_work_logs.up.sql")))
+	svc := service.NewIdentityService(postgres.NewIdentityRepository(db))
+	owner, workspace, err := svc.RegisterUser(ctx, "Owner", "owner@example.com", "contraseña-larga")
+	require.NoError(t, err)
+	member, _, err := svc.RegisterUser(ctx, "Member", "member@example.com", "contraseña-larga")
+	require.NoError(t, err)
+	_, _, err = svc.AddWorkspaceMember(ctx, owner.ID, workspace.ID, "member@example.com")
+	require.NoError(t, err)
+	web, err := svc.CreateProject(ctx, owner.ID, workspace.ID, "WEB", "Portal", "")
+	require.NoError(t, err)
+	_, err = svc.CreateProject(ctx, owner.ID, workspace.ID, "APP", "App", "")
+	require.NoError(t, err)
+
+	migrations := filepath.Join("..", "..", "..", "db", "migrations")
+	require.NoError(t, postgres.RunMigrations(db, migrations))
+
+	// Decision (a): the existing MEMBER keeps access to every project that already existed.
+	projects, err := svc.ListProjects(ctx, member.ID, workspace.ID)
+	require.NoError(t, err)
+	assert.Len(t, projects, 2)
+	var ownerRows int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM project_members WHERE user_id = $1`, owner.ID).Scan(&ownerRows))
+	assert.Zero(t, ownerRows, "the OWNER reaches every project through its role, not through rows")
+
+	// Removing access and restarting (migrations run again) must not give it back.
+	require.NoError(t, svc.RemoveProjectMember(ctx, owner.ID, web.ID, member.ID))
+	require.NoError(t, postgres.RunMigrations(db, migrations))
+	projects, err = svc.ListProjects(ctx, member.ID, workspace.ID)
+	require.NoError(t, err)
+	require.Len(t, projects, 1)
+	assert.Equal(t, "APP", projects[0].Key)
+
+	// Projects created after the migration are not given to existing MEMBERs automatically.
+	_, err = svc.CreateProject(ctx, owner.ID, workspace.ID, "NEW", "Nuevo", "")
+	require.NoError(t, err)
+	projects, err = svc.ListProjects(ctx, member.ID, workspace.ID)
+	require.NoError(t, err)
+	assert.Len(t, projects, 1)
 }

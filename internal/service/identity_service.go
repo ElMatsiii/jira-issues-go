@@ -29,6 +29,9 @@ type IdentityService interface {
 	CreateProject(ctx context.Context, requesterID, workspaceID, key, name, description string) (*domain.Project, error)
 	ListProjects(ctx context.Context, requesterID, workspaceID string) ([]*domain.Project, error)
 	CheckProjectAccess(ctx context.Context, userID, projectID string) (ProjectAccess, error)
+	AddProjectMember(ctx context.Context, requesterID, projectID, memberEmail string) (*domain.ProjectMember, error)
+	ListProjectMembers(ctx context.Context, requesterID, projectID string) ([]*domain.ProjectMember, error)
+	RemoveProjectMember(ctx context.Context, requesterID, projectID, userID string) error
 }
 
 // timingHash is verified when the email does not exist, so an unknown email costs the same scrypt
@@ -130,11 +133,96 @@ func (s *identityService) CreateProject(ctx context.Context, requesterID, worksp
 	return project, nil
 }
 
+// ListProjects: the OWNER and ADMINs get every project of the workspace; a MEMBER only its projects.
 func (s *identityService) ListProjects(ctx context.Context, requesterID, workspaceID string) ([]*domain.Project, error) {
-	if _, err := s.requireRole(ctx, workspaceID, requesterID, domain.WorkspaceRole.IsMember); err != nil {
+	role, err := s.requireRole(ctx, workspaceID, requesterID, domain.WorkspaceRole.IsMember)
+	if err != nil {
 		return nil, err
 	}
-	return s.repo.ListWorkspaceProjects(ctx, workspaceID)
+	if role.ReachesEveryProject() {
+		return s.repo.ListWorkspaceProjects(ctx, workspaceID)
+	}
+	return s.repo.ListMemberProjects(ctx, workspaceID, requesterID)
+}
+
+// manageableProject returns the workspace of a project the requester may manage (OWNER or ADMIN).
+// An unknown project answers like a project without access, so project ids cannot be probed.
+func (s *identityService) manageableProject(ctx context.Context, requesterID, projectID string) (string, error) {
+	workspaceID, err := s.repo.GetProjectWorkspaceID(ctx, projectID)
+	if errors.Is(err, domain.ErrProjectNotFound) {
+		return "", domain.ErrProjectForbidden
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.requireRole(ctx, workspaceID, requesterID, domain.WorkspaceRole.CanManage); err != nil {
+		return "", err
+	}
+	return workspaceID, nil
+}
+
+// AddProjectMember gives an existing user access to one project. A user outside the workspace joins
+// it as MEMBER; the OWNER and ADMINs already reach every project, so they are returned unchanged.
+func (s *identityService) AddProjectMember(ctx context.Context, requesterID, projectID, memberEmail string) (*domain.ProjectMember, error) {
+	workspaceID, err := s.manageableProject(ctx, requesterID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	user, err := s.repo.GetUserByEmail(ctx, domain.NormalizeEmail(memberEmail))
+	if err != nil {
+		return nil, err
+	}
+	role, err := s.repo.GetMemberRole(ctx, workspaceID, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	if role == domain.RoleNone {
+		if role, err = s.repo.AddMember(ctx, workspaceID, user.ID, domain.RoleMember); err != nil {
+			return nil, err
+		}
+	}
+	if role.ReachesEveryProject() {
+		return &domain.ProjectMember{User: user, Role: role, Invited: false}, nil
+	}
+	if err := s.repo.AddProjectMember(ctx, projectID, user.ID); err != nil {
+		return nil, err
+	}
+	return &domain.ProjectMember{User: user, Role: role, Invited: true}, nil
+}
+
+// ListProjectMembers: anyone with access to the project may see who else has it.
+func (s *identityService) ListProjectMembers(ctx context.Context, requesterID, projectID string) ([]*domain.ProjectMember, error) {
+	access, err := s.CheckProjectAccess(ctx, requesterID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if !access.Allowed {
+		return nil, domain.ErrProjectForbidden
+	}
+	return s.repo.ListProjectMembers(ctx, projectID, access.WorkspaceID)
+}
+
+// RemoveProjectMember removes an invited MEMBER from one project; the user stays in the workspace.
+func (s *identityService) RemoveProjectMember(ctx context.Context, requesterID, projectID, userID string) error {
+	workspaceID, err := s.manageableProject(ctx, requesterID, projectID)
+	if err != nil {
+		return err
+	}
+	role, err := s.repo.GetMemberRole(ctx, workspaceID, userID)
+	if err != nil {
+		return err
+	}
+	if role.ReachesEveryProject() {
+		return domain.ErrMemberNotRemovable
+	}
+	removed, err := s.repo.RemoveProjectMember(ctx, projectID, userID)
+	if err != nil {
+		return err
+	}
+	if !removed {
+		return domain.ErrProjectMemberNotFound
+	}
+	return nil
 }
 
 func (s *identityService) CheckProjectAccess(ctx context.Context, userID, projectID string) (ProjectAccess, error) {
@@ -152,6 +240,16 @@ func (s *identityService) CheckProjectAccess(ctx context.Context, userID, projec
 	}
 	if !role.IsMember() {
 		return ProjectAccess{}, nil
+	}
+	if !role.ReachesEveryProject() {
+		// A MEMBER reaches only the projects it was added to.
+		invited, err := s.repo.IsProjectMember(ctx, projectID, userID)
+		if err != nil {
+			return ProjectAccess{}, fmt.Errorf("check project access: %w", err)
+		}
+		if !invited {
+			return ProjectAccess{}, nil
+		}
 	}
 	return ProjectAccess{Allowed: true, Role: role, WorkspaceID: workspaceID}, nil
 }

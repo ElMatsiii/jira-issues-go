@@ -56,6 +56,19 @@ type Workspace struct {
 	CreatedAt time.Time
 }
 
+// ProjectMember is someone with access to a project. Invited is true when the access comes from
+// project_members (it can be removed); false for the OWNER and ADMINs, who reach every project.
+type ProjectMember struct {
+	User    *User
+	Role    WorkspaceRole
+	Invited bool
+}
+
+// ReachesEveryProject reports whether the role gives access to every project of the workspace.
+func (r WorkspaceRole) ReachesEveryProject() bool {
+	return r.CanManage()
+}
+
 // Limits shared with the tables (app_users, projects) and with the rules the BFF applied before.
 const (
 	MaxUserNameLength    = 120

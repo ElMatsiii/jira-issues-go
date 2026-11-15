@@ -43,6 +43,17 @@ func WorkspaceToProto(workspace *Workspace) *issuesv1.Workspace {
 	}
 }
 
+func ProjectMemberToProto(member *ProjectMember) *issuesv1.ProjectMember {
+	if member == nil {
+		return nil
+	}
+	return &issuesv1.ProjectMember{
+		User:    UserToProto(member.User),
+		Role:    RoleToProto(member.Role),
+		Invited: member.Invited,
+	}
+}
+
 func ProjectToProto(project *Project) *issuesv1.Project {
 	if project == nil {
 		return nil

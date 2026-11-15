@@ -55,10 +55,12 @@ func identityError(operation string, err error) error {
 		return status.Error(codes.AlreadyExists, err.Error())
 	case errors.Is(err, domain.ErrInvalidCredentials):
 		return status.Error(codes.Unauthenticated, err.Error())
-	case errors.Is(err, domain.ErrWorkspaceForbidden):
+	case errors.Is(err, domain.ErrWorkspaceForbidden), errors.Is(err, domain.ErrProjectForbidden):
 		return status.Error(codes.PermissionDenied, err.Error())
-	case errors.Is(err, domain.ErrUserNotFound):
+	case errors.Is(err, domain.ErrUserNotFound), errors.Is(err, domain.ErrProjectMemberNotFound):
 		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, domain.ErrMemberNotRemovable):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	default:
 		return status.Errorf(codes.Internal, "failed to %s: %v", operation, err)
 	}
@@ -197,4 +199,62 @@ func (s *ProjectServer) CheckProjectAccess(ctx context.Context, req *issuesv1.Ch
 		Role:        domain.RoleToProto(access.Role),
 		WorkspaceId: access.WorkspaceID,
 	}, nil
+}
+
+func (s *ProjectServer) AddProjectMember(ctx context.Context, req *issuesv1.AddProjectMemberRequest) (*issuesv1.AddProjectMemberResponse, error) {
+	requesterID, err := requireUUID("requester_id", req.GetRequesterId())
+	if err != nil {
+		return nil, err
+	}
+	projectID, err := requireUUID("project_id", req.GetProjectId())
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetMemberEmail()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "member_email is required")
+	}
+	member, err := s.svc.AddProjectMember(ctx, requesterID, projectID, req.GetMemberEmail())
+	if err != nil {
+		return nil, identityError("add project member", err)
+	}
+	return &issuesv1.AddProjectMemberResponse{Member: domain.ProjectMemberToProto(member)}, nil
+}
+
+func (s *ProjectServer) ListProjectMembers(ctx context.Context, req *issuesv1.ListProjectMembersRequest) (*issuesv1.ListProjectMembersResponse, error) {
+	requesterID, err := requireUUID("requester_id", req.GetRequesterId())
+	if err != nil {
+		return nil, err
+	}
+	projectID, err := requireUUID("project_id", req.GetProjectId())
+	if err != nil {
+		return nil, err
+	}
+	members, err := s.svc.ListProjectMembers(ctx, requesterID, projectID)
+	if err != nil {
+		return nil, identityError("list project members", err)
+	}
+	result := make([]*issuesv1.ProjectMember, len(members))
+	for i, member := range members {
+		result[i] = domain.ProjectMemberToProto(member)
+	}
+	return &issuesv1.ListProjectMembersResponse{Members: result}, nil
+}
+
+func (s *ProjectServer) RemoveProjectMember(ctx context.Context, req *issuesv1.RemoveProjectMemberRequest) (*issuesv1.RemoveProjectMemberResponse, error) {
+	requesterID, err := requireUUID("requester_id", req.GetRequesterId())
+	if err != nil {
+		return nil, err
+	}
+	projectID, err := requireUUID("project_id", req.GetProjectId())
+	if err != nil {
+		return nil, err
+	}
+	userID, err := requireUUID("user_id", req.GetUserId())
+	if err != nil {
+		return nil, err
+	}
+	if err := s.svc.RemoveProjectMember(ctx, requesterID, projectID, userID); err != nil {
+		return nil, identityError("remove project member", err)
+	}
+	return &issuesv1.RemoveProjectMemberResponse{}, nil
 }

@@ -201,7 +201,16 @@ func TestProjectGRPC_CreateListAndCheckAccess(t *testing.T) {
 	_, err = f.projects.CreateProject(ctx, &issuesv1.CreateProjectRequest{RequesterId: owner.GetUser().GetId(), Key: "APP", Name: "App"})
 	requireCode(t, err, codes.InvalidArgument, "workspace_id is required")
 
+	// Being in the workspace is not enough: a MEMBER sees only the projects it was added to.
 	listed, err := f.projects.ListProjects(ctx, &issuesv1.ListProjectsRequest{RequesterId: member.GetUser().GetId(), WorkspaceId: workspaceID})
+	require.NoError(t, err)
+	assert.Empty(t, listed.GetProjects())
+	_, err = f.projects.AddProjectMember(ctx, &issuesv1.AddProjectMemberRequest{
+		RequesterId: owner.GetUser().GetId(), ProjectId: created.GetProject().GetId(), MemberEmail: "member@example.com",
+	})
+	require.NoError(t, err)
+
+	listed, err = f.projects.ListProjects(ctx, &issuesv1.ListProjectsRequest{RequesterId: member.GetUser().GetId(), WorkspaceId: workspaceID})
 	require.NoError(t, err)
 	require.Len(t, listed.GetProjects(), 1)
 	assert.Equal(t, created.GetProject().GetId(), listed.GetProjects()[0].GetId())
@@ -232,4 +241,66 @@ func TestProjectGRPC_CreateListAndCheckAccess(t *testing.T) {
 	f.repo.Err = errors.New("connection reset")
 	_, err = f.projects.CheckProjectAccess(ctx, &issuesv1.CheckProjectAccessRequest{UserId: member.GetUser().GetId(), ProjectId: created.GetProject().GetId()})
 	requireCode(t, err, codes.Internal, "failed to check project access")
+}
+
+func TestProjectGRPC_ProjectMembers(t *testing.T) {
+	f := setupIdentityFixture(t)
+	ctx := context.Background()
+	owner := f.register(t, "Owner", "owner@example.com")
+	guest := f.register(t, "Guest", "guest@example.com")
+	outsider := f.register(t, "Outsider", "outsider@example.com")
+	ownerID := owner.GetUser().GetId()
+	created, err := f.projects.CreateProject(ctx, &issuesv1.CreateProjectRequest{
+		RequesterId: ownerID, WorkspaceId: owner.GetWorkspace().GetId(), Key: "WEB", Name: "Portal",
+	})
+	require.NoError(t, err)
+	projectID := created.GetProject().GetId()
+
+	added, err := f.projects.AddProjectMember(ctx, &issuesv1.AddProjectMemberRequest{RequesterId: ownerID, ProjectId: projectID, MemberEmail: "Guest@example.com"})
+	require.NoError(t, err)
+	assert.Equal(t, guest.GetUser().GetId(), added.GetMember().GetUser().GetId())
+	assert.Equal(t, issuesv1.WorkspaceRole_WORKSPACE_ROLE_MEMBER, added.GetMember().GetRole())
+	assert.True(t, added.GetMember().GetInvited())
+
+	members, err := f.projects.ListProjectMembers(ctx, &issuesv1.ListProjectMembersRequest{RequesterId: guest.GetUser().GetId(), ProjectId: projectID})
+	require.NoError(t, err)
+	require.Len(t, members.GetMembers(), 2)
+	assert.Equal(t, issuesv1.WorkspaceRole_WORKSPACE_ROLE_OWNER, members.GetMembers()[0].GetRole())
+	assert.False(t, members.GetMembers()[0].GetInvited())
+	assert.Equal(t, "Guest", members.GetMembers()[1].GetUser().GetName())
+
+	// Error codes.
+	_, err = f.projects.AddProjectMember(ctx, &issuesv1.AddProjectMemberRequest{RequesterId: guest.GetUser().GetId(), ProjectId: projectID, MemberEmail: "outsider@example.com"})
+	requireCode(t, err, codes.PermissionDenied, "not allowed in this workspace")
+	_, err = f.projects.AddProjectMember(ctx, &issuesv1.AddProjectMemberRequest{RequesterId: ownerID, ProjectId: projectID, MemberEmail: "nadie@example.com"})
+	requireCode(t, err, codes.NotFound, "user not found")
+	_, err = f.projects.AddProjectMember(ctx, &issuesv1.AddProjectMemberRequest{RequesterId: ownerID, ProjectId: projectID, MemberEmail: " "})
+	requireCode(t, err, codes.InvalidArgument, "member_email is required")
+	_, err = f.projects.AddProjectMember(ctx, &issuesv1.AddProjectMemberRequest{RequesterId: ownerID, ProjectId: "WEB", MemberEmail: "x@example.com"})
+	requireCode(t, err, codes.InvalidArgument, "project_id must be a valid UUID")
+	_, err = f.projects.AddProjectMember(ctx, &issuesv1.AddProjectMemberRequest{ProjectId: projectID, MemberEmail: "x@example.com"})
+	requireCode(t, err, codes.InvalidArgument, "requester_id is required")
+	_, err = f.projects.ListProjectMembers(ctx, &issuesv1.ListProjectMembersRequest{RequesterId: outsider.GetUser().GetId(), ProjectId: projectID})
+	requireCode(t, err, codes.PermissionDenied, "no access to this project")
+	_, err = f.projects.ListProjectMembers(ctx, &issuesv1.ListProjectMembersRequest{ProjectId: projectID})
+	requireCode(t, err, codes.InvalidArgument, "requester_id is required")
+	_, err = f.projects.ListProjectMembers(ctx, &issuesv1.ListProjectMembersRequest{RequesterId: ownerID})
+	requireCode(t, err, codes.InvalidArgument, "project_id is required")
+
+	remove := func(userID string) error {
+		_, err := f.projects.RemoveProjectMember(ctx, &issuesv1.RemoveProjectMemberRequest{RequesterId: ownerID, ProjectId: projectID, UserId: userID})
+		return err
+	}
+	requireCode(t, remove(ownerID), codes.FailedPrecondition, "cannot be removed")
+	requireCode(t, remove("guest"), codes.InvalidArgument, "user_id must be a valid UUID")
+	require.NoError(t, remove(guest.GetUser().GetId()))
+	requireCode(t, remove(guest.GetUser().GetId()), codes.NotFound, "not a member of this project")
+	_, err = f.projects.RemoveProjectMember(ctx, &issuesv1.RemoveProjectMemberRequest{ProjectId: projectID, UserId: ownerID})
+	requireCode(t, err, codes.InvalidArgument, "requester_id is required")
+	_, err = f.projects.RemoveProjectMember(ctx, &issuesv1.RemoveProjectMemberRequest{RequesterId: ownerID, UserId: ownerID})
+	requireCode(t, err, codes.InvalidArgument, "project_id is required")
+
+	f.repo.Err = errors.New("connection reset")
+	_, err = f.projects.ListProjectMembers(ctx, &issuesv1.ListProjectMembersRequest{RequesterId: ownerID, ProjectId: projectID})
+	requireCode(t, err, codes.Internal, "failed to list project members")
 }
