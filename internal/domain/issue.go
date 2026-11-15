@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ type Issue struct {
 	Type               Type      `json:"type" db:"type"`
 	StoryPoints        int32     `json:"storyPoints" db:"story_points"`
 	SprintID           *string   `json:"sprintId,omitempty" db:"sprint_id"`
+	ParentID           *string   `json:"parentId,omitempty" db:"parent_id"`
 	AssigneeID         *string   `json:"assigneeId,omitempty" db:"assignee_id"`
 	ReporterID         *string   `json:"reporterId,omitempty" db:"reporter_id"`
 	AcceptanceCriteria string    `json:"acceptanceCriteria" db:"acceptance_criteria"`
@@ -91,6 +93,24 @@ func (i *Issue) Validate() error {
 		return ErrInvalidType
 	}
 
+	return nil
+}
+
+// ValidateParent checks that parent can be the parent epic of child: it must be an EPIC of the
+// same project, and an epic cannot itself have a parent.
+func ValidateParent(child, parent *Issue) error {
+	if parent == nil {
+		return ErrParentNotFound
+	}
+	if child.Type == TypeEpic {
+		return fmt.Errorf("%w: an epic cannot have a parent", ErrInvalidParent)
+	}
+	if parent.Type != TypeEpic {
+		return fmt.Errorf("%w: %s is a %s, not an EPIC", ErrInvalidParent, parent.Key, parent.Type)
+	}
+	if parent.ProjectID != child.ProjectID {
+		return fmt.Errorf("%w: epic %s belongs to another project", ErrInvalidParent, parent.Key)
+	}
 	return nil
 }
 

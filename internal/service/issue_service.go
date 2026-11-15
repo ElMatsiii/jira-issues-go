@@ -48,6 +48,22 @@ func (s *issueService) CreateIssue(ctx context.Context, dto CreateIssueDTO) (*do
 		return nil, domain.ErrEmptyProjectID
 	}
 
+	priority := dto.Priority
+	if priority == domain.PriorityUnspecified {
+		priority = domain.PriorityMedium
+	}
+
+	issueType := dto.Type
+	if issueType == domain.TypeUnspecified {
+		issueType = domain.TypeStory
+	}
+
+	// The parent epic is checked before reserving a key, so a rejected request does not burn a number.
+	parentID, err := s.resolveParent(ctx, dto.ParentID, projectID, issueType)
+	if err != nil {
+		return nil, err
+	}
+
 	// Reserving the next number also proves the project exists. A failure used to be swallowed,
 	// producing keys like "PROJ-0" and an opaque foreign-key error on insert.
 	seq, prefix, err := s.repo.GetNextSequence(ctx, projectID)
@@ -65,16 +81,6 @@ func (s *issueService) CreateIssue(ctx context.Context, dto CreateIssueDTO) (*do
 	}
 	issueKey := fmt.Sprintf("%s-%d", prefix, seq)
 
-	priority := dto.Priority
-	if priority == domain.PriorityUnspecified {
-		priority = domain.PriorityMedium
-	}
-
-	issueType := dto.Type
-	if issueType == domain.TypeUnspecified {
-		issueType = domain.TypeStory
-	}
-
 	now := time.Now().UTC()
 	issue := &domain.Issue{
 		ID:                 uuid.New().String(),
@@ -87,6 +93,7 @@ func (s *issueService) CreateIssue(ctx context.Context, dto CreateIssueDTO) (*do
 		Type:               issueType,
 		StoryPoints:        dto.StoryPoints,
 		SprintID:           dto.SprintID,
+		ParentID:           parentID,
 		AssigneeID:         dto.AssigneeID,
 		ReporterID:         dto.ReporterID,
 		AcceptanceCriteria: dto.AcceptanceCriteria,
@@ -108,6 +115,29 @@ func (s *issueService) CreateIssue(ctx context.Context, dto CreateIssueDTO) (*do
 	}
 
 	return issue, nil
+}
+
+// resolveParent returns the parent epic ID to store, or nil when none was requested. The parent
+// must exist and be an EPIC of the same project; an epic cannot have a parent.
+func (s *issueService) resolveParent(ctx context.Context, requested *string, projectID string, issueType domain.Type) (*string, error) {
+	if requested == nil || strings.TrimSpace(*requested) == "" {
+		return nil, nil
+	}
+	parentID := strings.TrimSpace(*requested)
+
+	parent, err := s.repo.GetByID(ctx, parentID)
+	if errors.Is(err, domain.ErrNotFound) || (err == nil && parent == nil) {
+		return nil, fmt.Errorf("%w: %s", domain.ErrParentNotFound, parentID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load parent epic %s: %w", parentID, err)
+	}
+
+	child := &domain.Issue{ProjectID: projectID, Type: issueType}
+	if err := domain.ValidateParent(child, parent); err != nil {
+		return nil, err
+	}
+	return &parent.ID, nil
 }
 
 func (s *issueService) GetIssue(ctx context.Context, idOrKey string) (*domain.Issue, error) {

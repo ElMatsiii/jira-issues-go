@@ -17,6 +17,7 @@ type CreateIssueDTO struct {
 	Type               domain.Type
 	StoryPoints        int32
 	SprintID           *string
+	ParentID           *string // optional parent epic (an EPIC of the same project)
 	AssigneeID         *string
 	ReporterID         *string
 	AcceptanceCriteria string

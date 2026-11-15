@@ -30,6 +30,9 @@ func IssueToProto(issue *Issue) *issuesv1.Issue {
 	if issue.SprintID != nil {
 		pb.SprintId = *issue.SprintID
 	}
+	if issue.ParentID != nil {
+		pb.ParentId = *issue.ParentID
+	}
 	if issue.AssigneeID != nil {
 		pb.AssigneeId = *issue.AssigneeID
 	}
@@ -46,10 +49,14 @@ func ProtoToIssue(pb *issuesv1.Issue) *Issue {
 		return nil
 	}
 
-	var sprintID, assigneeID, reporterID *string
+	var sprintID, parentID, assigneeID, reporterID *string
 	if pb.SprintId != "" {
 		s := pb.SprintId
 		sprintID = &s
+	}
+	if pb.ParentId != "" {
+		p := pb.ParentId
+		parentID = &p
 	}
 	if pb.AssigneeId != "" {
 		a := pb.AssigneeId
@@ -81,6 +88,7 @@ func ProtoToIssue(pb *issuesv1.Issue) *Issue {
 		Type:               TypeFromProto(pb.Type),
 		StoryPoints:        pb.StoryPoints,
 		SprintID:           sprintID,
+		ParentID:           parentID,
 		AssigneeID:         assigneeID,
 		ReporterID:         reporterID,
 		AcceptanceCriteria: pb.AcceptanceCriteria,

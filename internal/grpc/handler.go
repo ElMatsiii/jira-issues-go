@@ -65,11 +65,17 @@ func (s *Server) CreateIssue(ctx context.Context, req *issuesv1.CreateIssueReque
 	if err := validateOptionalUUID("sprint_id", req.GetSprintId()); err != nil {
 		return nil, err
 	}
+	if err := validateOptionalUUID("parent_id", req.GetParentId()); err != nil {
+		return nil, err
+	}
 
-	var sprintID, assigneeID, reporterID *string
+	var sprintID, parentID, assigneeID, reporterID *string
 	if req.GetSprintId() != "" {
 		sid := req.GetSprintId()
 		sprintID = &sid
+	}
+	if pid := strings.TrimSpace(req.GetParentId()); pid != "" {
+		parentID = &pid
 	}
 	if req.GetAssigneeId() != "" {
 		aid := req.GetAssigneeId()
@@ -88,6 +94,7 @@ func (s *Server) CreateIssue(ctx context.Context, req *issuesv1.CreateIssueReque
 		Type:               domain.TypeFromProto(req.GetType()),
 		StoryPoints:        req.GetStoryPoints(),
 		SprintID:           sprintID,
+		ParentID:           parentID,
 		AssigneeID:         assigneeID,
 		ReporterID:         reporterID,
 		AcceptanceCriteria: req.GetAcceptanceCriteria(),
@@ -101,11 +108,15 @@ func (s *Server) CreateIssue(ctx context.Context, req *issuesv1.CreateIssueReque
 			errors.Is(err, domain.ErrTitleTooLong) ||
 			errors.Is(err, domain.ErrInvalidStatus) ||
 			errors.Is(err, domain.ErrInvalidPriority) ||
-			errors.Is(err, domain.ErrInvalidType) {
+			errors.Is(err, domain.ErrInvalidType) ||
+			errors.Is(err, domain.ErrInvalidParent) {
 			return nil, status.Errorf(codes.InvalidArgument, "validation error: %v", err)
 		}
 		if errors.Is(err, domain.ErrProjectNotFound) {
 			return nil, status.Errorf(codes.NotFound, "project not found: %v", err)
+		}
+		if errors.Is(err, domain.ErrParentNotFound) {
+			return nil, status.Errorf(codes.NotFound, "parent epic not found: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "failed to create issue: %v", err)
 	}
