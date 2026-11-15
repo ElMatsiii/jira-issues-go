@@ -16,6 +16,14 @@ var (
 	ErrEmptyIssueIDs           = errors.New("issue IDs cannot be empty")
 	ErrParentNotFound          = errors.New("parent epic not found")
 	ErrInvalidParent           = errors.New("invalid parent epic")
+	// Identity, workspaces and projects.
+	ErrInvalidUserInput    = errors.New("invalid user data")
+	ErrInvalidProjectInput = errors.New("invalid project data")
+	ErrUserNotFound        = errors.New("user not found")
+	ErrEmailTaken          = errors.New("an account with that email already exists")
+	ErrInvalidCredentials  = errors.New("invalid email or password")
+	ErrWorkspaceForbidden  = errors.New("not allowed in this workspace")
+	ErrProjectKeyTaken     = errors.New("project key already in use")
 	// ErrVersionConflict means the issue changed after it was read (optimistic concurrency).
 	ErrVersionConflict = errors.New("issue was modified concurrently, retry the operation")
 )

@@ -25,7 +25,7 @@ func TestMigrationFiles_ReturnsUpFilesInVersionOrder(t *testing.T) {
 	assert.Equal(t, "000002_b.up.sql", filepath.Base(files[1]))
 }
 
-func TestMigrationFiles_RepositoryMigrationsIncludeParentEpic(t *testing.T) {
+func TestMigrationFiles_RepositoryMigrationsInOrder(t *testing.T) {
 	files, err := postgres.MigrationFiles(filepath.Join("..", "..", "..", "db", "migrations"))
 
 	require.NoError(t, err)
@@ -33,7 +33,11 @@ func TestMigrationFiles_RepositoryMigrationsIncludeParentEpic(t *testing.T) {
 	for i, file := range files {
 		names[i] = filepath.Base(file)
 	}
-	assert.Equal(t, []string{"000001_init_schema.up.sql", "000002_issue_parent.up.sql"}, names)
+	assert.Equal(t, []string{
+		"000001_init_schema.up.sql",
+		"000002_issue_parent.up.sql",
+		"000003_identity_workspaces.up.sql",
+	}, names)
 }
 
 func TestRunMigrations_EmptyDir_FailsBeforeTouchingTheDatabase(t *testing.T) {
