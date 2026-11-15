@@ -89,3 +89,21 @@ func (m *MockWorkLogRepository) SumProjectHours(ctx context.Context, projectID s
 func (m *MockWorkLogRepository) SumSprintHours(ctx context.Context, projectID, sprintID string) (float64, error) {
 	return m.sum(func(log *domain.WorkLog) bool { return log.ProjectID == projectID && log.SprintID == sprintID })
 }
+
+func (m *MockWorkLogRepository) ListByIssue(ctx context.Context, projectID, issueID string, limit int) ([]*domain.WorkLog, error) {
+	logs, err := m.ListByProject(ctx, projectID, len(m.Logs)+1)
+	if err != nil {
+		return nil, err
+	}
+	filtered := []*domain.WorkLog{}
+	for _, log := range logs {
+		if log.IssueID == issueID && len(filtered) < limit {
+			filtered = append(filtered, log)
+		}
+	}
+	return filtered, nil
+}
+
+func (m *MockWorkLogRepository) SumIssueHours(ctx context.Context, projectID, issueID string) (float64, error) {
+	return m.sum(func(log *domain.WorkLog) bool { return log.ProjectID == projectID && log.IssueID == issueID })
+}

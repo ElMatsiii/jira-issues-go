@@ -184,3 +184,58 @@ func TestSumSprintHours_OnlyThatSprint(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, total)
 }
+
+func TestListIssueWorkLogs_OnlyThatIssueAndItsTotal(t *testing.T) {
+	ctx := context.Background()
+	f := newWorkLogFixture()
+	otherIssue := "abababab-abab-4bab-8bab-abababababab"
+	f.issues.Issues[otherIssue] = &domain.Issue{ID: otherIssue, Key: "WEB-2", ProjectID: wlProjectID, Title: "Otra"}
+	for _, entry := range []struct {
+		issue string
+		hours float64
+	}{{wlIssueID, 1}, {otherIssue, 5}, {wlIssueID, 2.5}} {
+		_, err := f.svc.LogWork(ctx, memberID, wlProjectID, entry.issue, entry.hours, "")
+		require.NoError(t, err)
+	}
+
+	logs, total, err := f.svc.ListIssueWorkLogs(ctx, memberID, wlProjectID, wlIssueID, 0)
+
+	require.NoError(t, err)
+	require.Len(t, logs, 2)
+	assert.Equal(t, 2.5, logs[0].Hours, "newest first")
+	assert.Equal(t, 3.5, total, "only this issue's hours")
+
+	logs, _, err = f.svc.ListIssueWorkLogs(ctx, memberID, wlProjectID, wlIssueID, 1)
+	require.NoError(t, err)
+	assert.Len(t, logs, 1)
+}
+
+func TestListIssueWorkLogs_Rejections(t *testing.T) {
+	ctx := context.Background()
+	f := newWorkLogFixture()
+
+	_, _, err := f.svc.ListIssueWorkLogs(ctx, outsiderID, wlProjectID, wlIssueID, 0)
+	assert.ErrorIs(t, err, domain.ErrProjectForbidden)
+	_, _, err = f.svc.ListIssueWorkLogs(ctx, memberID, wlProjectID, wlForeignIssue, 0)
+	assert.ErrorIs(t, err, domain.ErrIssueNotInProject, "an issue of another project is not listed")
+
+	f.logs.Err = errors.New("connection reset")
+	_, _, err = f.svc.ListIssueWorkLogs(ctx, memberID, wlProjectID, wlIssueID, 0)
+	assert.ErrorIs(t, err, f.logs.Err)
+}
+
+// sumFails lets ListByIssue work and fails the total, to cover that error path.
+type sumFails struct{ *service.MockWorkLogRepository }
+
+func (sumFails) SumIssueHours(context.Context, string, string) (float64, error) {
+	return 0, errors.New("sum failed")
+}
+
+func TestListIssueWorkLogs_TotalFailureIsReturned(t *testing.T) {
+	f := newWorkLogFixture()
+	svc := service.NewWorkLogService(sumFails{f.logs}, f.issues, service.NewIdentityService(f.identity))
+
+	_, _, err := svc.ListIssueWorkLogs(context.Background(), memberID, wlProjectID, wlIssueID, 0)
+
+	assert.EqualError(t, err, "sum failed")
+}

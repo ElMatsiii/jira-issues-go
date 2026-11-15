@@ -75,6 +75,10 @@ type WorkLogRepository interface {
 	ListByProject(ctx context.Context, projectID string, limit int) ([]*domain.WorkLog, error)
 	// SumProjectHours adds every entry of the project (not only a listed page).
 	SumProjectHours(ctx context.Context, projectID string) (float64, error)
+	// ListByIssue returns one issue's newest entries first, at most limit.
+	ListByIssue(ctx context.Context, projectID, issueID string, limit int) ([]*domain.WorkLog, error)
+	// SumIssueHours adds every entry of the issue.
+	SumIssueHours(ctx context.Context, projectID, issueID string) (float64, error)
 	// SumSprintHours adds the project's entries logged while their issue was in the sprint.
 	SumSprintHours(ctx context.Context, projectID, sprintID string) (float64, error)
 }

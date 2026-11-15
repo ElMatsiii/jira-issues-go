@@ -13,10 +13,14 @@ import (
 	"jira-issues-go/internal/repository"
 )
 
+// reporterNameColumn is the name of the user in reporter_id (empty when unknown). reporter_id is a
+// VARCHAR, so it is compared as text: a value that is not a user id simply has no name.
+const reporterNameColumn = `COALESCE((SELECT u.name FROM app_users u WHERE u.id::text = issues.reporter_id), '')`
+
 // issueColumns is the column list read by every query; scanIssue reads them in this order.
 const issueColumns = `id, key, project_id, title, description, status, priority,
 		       type, story_points, sprint_id, assignee_id, reporter_id,
-		       acceptance_criteria, version, created_at, updated_at, parent_id`
+		       acceptance_criteria, version, created_at, updated_at, parent_id, ` + reporterNameColumn
 
 // rowScanner is implemented by *sql.Row and *sql.Rows.
 type rowScanner interface {
@@ -78,7 +82,7 @@ func (r *issueRepo) Create(ctx context.Context, issue *domain.Issue) error {
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
 		)
-		RETURNING created_at, updated_at;
+		RETURNING created_at, updated_at, ` + reporterNameColumn + `;
 	`
 
 	now := time.Now().UTC()
@@ -111,7 +115,7 @@ func (r *issueRepo) Create(ctx context.Context, issue *domain.Issue) error {
 		issue.CreatedAt,
 		issue.UpdatedAt,
 		nullableString(issue.ParentID),
-	).Scan(&issue.CreatedAt, &issue.UpdatedAt)
+	).Scan(&issue.CreatedAt, &issue.UpdatedAt, &issue.ReporterName)
 
 	return MapPgError(err)
 }
@@ -315,6 +319,7 @@ func scanIssue(row rowScanner, extra ...any) (*domain.Issue, error) {
 		&issue.CreatedAt,
 		&issue.UpdatedAt,
 		&parentNull,
+		&issue.ReporterName,
 	}
 	if err := row.Scan(append(dest, extra...)...); err != nil {
 		return nil, MapPgError(err)

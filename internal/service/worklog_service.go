@@ -20,6 +20,8 @@ type WorkLogService interface {
 	// ListWorkLogs returns the newest entries (limit <= 0 or above the maximum means 100) and the
 	// total hours of the whole project.
 	ListWorkLogs(ctx context.Context, requesterID, projectID string, limit int) ([]*domain.WorkLog, float64, error)
+	// ListIssueWorkLogs is ListWorkLogs for one issue of the project: its newest entries and its total.
+	ListIssueWorkLogs(ctx context.Context, requesterID, projectID, issueID string, limit int) ([]*domain.WorkLog, float64, error)
 	SumSprintHours(ctx context.Context, projectID, sprintID string) (float64, error)
 }
 
@@ -54,12 +56,9 @@ func (s *workLogService) LogWork(ctx context.Context, userID, projectID, issueID
 		return nil, err
 	}
 
-	issue, err := s.issues.GetByID(ctx, issueID)
-	if errors.Is(err, domain.ErrNotFound) || (err == nil && (issue == nil || issue.ProjectID != projectID)) {
-		return nil, domain.ErrIssueNotInProject
-	}
+	issue, err := s.issueInProject(ctx, projectID, issueID)
 	if err != nil {
-		return nil, fmt.Errorf("load issue %s: %w", issueID, err)
+		return nil, err
 	}
 	// The entry remembers the sprint the issue is in right now, so moving the issue later does not
 	// move hours between sprints.
@@ -73,14 +72,48 @@ func (s *workLogService) LogWork(ctx context.Context, userID, projectID, issueID
 	return log, nil
 }
 
+// issueInProject loads the issue and checks it belongs to the project (ErrIssueNotInProject otherwise).
+func (s *workLogService) issueInProject(ctx context.Context, projectID, issueID string) (*domain.Issue, error) {
+	issue, err := s.issues.GetByID(ctx, issueID)
+	if errors.Is(err, domain.ErrNotFound) || (err == nil && (issue == nil || issue.ProjectID != projectID)) {
+		return nil, domain.ErrIssueNotInProject
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load issue %s: %w", issueID, err)
+	}
+	return issue, nil
+}
+
+func normalizeWorkLogLimit(limit int) int {
+	if limit <= 0 || limit > domain.DefaultWorkLogLimit {
+		return domain.DefaultWorkLogLimit
+	}
+	return limit
+}
+
+func (s *workLogService) ListIssueWorkLogs(ctx context.Context, requesterID, projectID, issueID string, limit int) ([]*domain.WorkLog, float64, error) {
+	if err := s.requireAccess(ctx, requesterID, projectID); err != nil {
+		return nil, 0, err
+	}
+	if _, err := s.issueInProject(ctx, projectID, issueID); err != nil {
+		return nil, 0, err
+	}
+	logs, err := s.logs.ListByIssue(ctx, projectID, issueID, normalizeWorkLogLimit(limit))
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.logs.SumIssueHours(ctx, projectID, issueID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return logs, total, nil
+}
+
 func (s *workLogService) ListWorkLogs(ctx context.Context, requesterID, projectID string, limit int) ([]*domain.WorkLog, float64, error) {
 	if err := s.requireAccess(ctx, requesterID, projectID); err != nil {
 		return nil, 0, err
 	}
-	if limit <= 0 || limit > domain.DefaultWorkLogLimit {
-		limit = domain.DefaultWorkLogLimit
-	}
-	logs, err := s.logs.ListByProject(ctx, projectID, limit)
+	logs, err := s.logs.ListByProject(ctx, projectID, normalizeWorkLogLimit(limit))
 	if err != nil {
 		return nil, 0, err
 	}

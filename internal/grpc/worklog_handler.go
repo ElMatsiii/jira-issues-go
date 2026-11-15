@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -64,7 +65,17 @@ func (s *WorkLogServer) ListWorkLogs(ctx context.Context, req *issuesv1.ListWork
 	if err != nil {
 		return nil, err
 	}
-	logs, total, err := s.svc.ListWorkLogs(ctx, requesterID, projectID, int(req.GetLimit()))
+	// issue_id is optional: empty lists the whole project, otherwise only that issue.
+	if err := validateOptionalUUID("issue_id", req.GetIssueId()); err != nil {
+		return nil, err
+	}
+	var logs []*domain.WorkLog
+	var total float64
+	if issueID := strings.TrimSpace(req.GetIssueId()); issueID != "" {
+		logs, total, err = s.svc.ListIssueWorkLogs(ctx, requesterID, projectID, issueID, int(req.GetLimit()))
+	} else {
+		logs, total, err = s.svc.ListWorkLogs(ctx, requesterID, projectID, int(req.GetLimit()))
+	}
 	if err != nil {
 		return nil, workLogError("list work logs", err)
 	}

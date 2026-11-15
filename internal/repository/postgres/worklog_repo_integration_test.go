@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"jira-issues-go/internal/domain"
+	"jira-issues-go/internal/repository"
 	"jira-issues-go/internal/repository/postgres"
 	"jira-issues-go/internal/service"
 )
@@ -113,4 +114,65 @@ func TestIntegration_WorkLogRepository_FullFlow(t *testing.T) {
 	none, err := svc.SumSprintHours(ctx, project.ID, uuid.NewString())
 	require.NoError(t, err)
 	assert.Zero(t, none)
+}
+
+func TestIntegration_ReporterNameAndHoursPerIssue(t *testing.T) {
+	db := openIsolatedSchema(t)
+	require.NoError(t, postgres.RunMigrations(db, filepath.Join("..", "..", "..", "db", "migrations")))
+	ctx := context.Background()
+	identity := service.NewIdentityService(postgres.NewIdentityRepository(db))
+	issues := postgres.NewIssueRepository(db)
+	workLogs := service.NewWorkLogService(postgres.NewWorkLogRepository(db), issues, identity)
+
+	owner, workspace, err := identity.RegisterUser(ctx, "Ana Autora", "ana@example.com", "contraseña-larga")
+	require.NoError(t, err)
+	project, err := identity.CreateProject(ctx, owner.ID, workspace.ID, "WEB", "Portal", "")
+	require.NoError(t, err)
+
+	authored, err := domain.NewIssue(project.ID, "WEB-1", "Con autor", "", domain.PriorityMedium, domain.TypeStory, 3, "")
+	require.NoError(t, err)
+	authored.ReporterID = &owner.ID
+	require.NoError(t, issues.Create(ctx, authored))
+	assert.Equal(t, "Ana Autora", authored.ReporterName, "Create returns the reporter name")
+
+	legacyReporter := "not-a-user-id"
+	anonymous, err := domain.NewIssue(project.ID, "WEB-2", "Sin autor conocido", "", domain.PriorityMedium, domain.TypeTask, 1, "")
+	require.NoError(t, err)
+	anonymous.ReporterID = &legacyReporter
+	require.NoError(t, issues.Create(ctx, anonymous))
+	assert.Empty(t, anonymous.ReporterName, "a reporter that is not a user has no name")
+
+	byID, err := issues.GetByID(ctx, authored.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Ana Autora", byID.ReporterName)
+	byKey, err := issues.GetByKey(ctx, "WEB-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Ana Autora", byKey.ReporterName)
+	listed, _, err := issues.List(ctx, repository.ListFilter{ProjectID: project.ID, Limit: 10})
+	require.NoError(t, err)
+	names := map[string]string{}
+	for _, issue := range listed {
+		names[issue.Key] = issue.ReporterName
+	}
+	assert.Equal(t, map[string]string{"WEB-1": "Ana Autora", "WEB-2": ""}, names)
+	moved, err := issues.BatchUpdateSprint(ctx, []string{authored.ID}, uuid.NewString())
+	require.NoError(t, err)
+	assert.Equal(t, "Ana Autora", moved[0].ReporterName)
+
+	// Hours of one issue: its entries and its own total, not the project's.
+	for _, entry := range []struct {
+		issue string
+		hours float64
+	}{{authored.ID, 1.5}, {anonymous.ID, 4}, {authored.ID, 2}} {
+		_, err := workLogs.LogWork(ctx, owner.ID, project.ID, entry.issue, entry.hours, "")
+		require.NoError(t, err)
+	}
+	logs, total, err := workLogs.ListIssueWorkLogs(ctx, owner.ID, project.ID, authored.ID, 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 2)
+	assert.Equal(t, 2.0, logs[0].Hours, "newest first")
+	assert.InDelta(t, 3.5, total, 1e-9)
+	_, projectTotal, err := workLogs.ListWorkLogs(ctx, owner.ID, project.ID, 0)
+	require.NoError(t, err)
+	assert.InDelta(t, 7.5, projectTotal, 1e-9)
 }

@@ -39,6 +39,7 @@ func IssueToProto(issue *Issue) *issuesv1.Issue {
 	if issue.ReporterID != nil {
 		pb.ReporterId = *issue.ReporterID
 	}
+	pb.ReporterName = issue.ReporterName
 
 	return pb
 }
@@ -91,6 +92,7 @@ func ProtoToIssue(pb *issuesv1.Issue) *Issue {
 		ParentID:           parentID,
 		AssigneeID:         assigneeID,
 		ReporterID:         reporterID,
+		ReporterName:       pb.ReporterName,
 		AcceptanceCriteria: pb.AcceptanceCriteria,
 		Version:            1,
 		CreatedAt:          createdAt,

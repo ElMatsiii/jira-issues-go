@@ -23,6 +23,7 @@ type Issue struct {
 	ParentID           *string   `json:"parentId,omitempty" db:"parent_id"`
 	AssigneeID         *string   `json:"assigneeId,omitempty" db:"assignee_id"`
 	ReporterID         *string   `json:"reporterId,omitempty" db:"reporter_id"`
+	ReporterName       string    `json:"-" db:"-"` // from app_users; not stored in issues nor sent in Kafka events
 	AcceptanceCriteria string    `json:"acceptanceCriteria" db:"acceptance_criteria"`
 	Version            int       `json:"version" db:"version"`
 	CreatedAt          time.Time `json:"createdAt" db:"created_at"`

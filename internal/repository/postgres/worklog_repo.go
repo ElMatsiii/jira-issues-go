@@ -54,13 +54,22 @@ func (r *workLogRepo) Create(ctx context.Context, log *domain.WorkLog) error {
 }
 
 func (r *workLogRepo) ListByProject(ctx context.Context, projectID string, limit int) ([]*domain.WorkLog, error) {
+	return r.list(ctx, `wl.project_id = $1`, projectID, limit)
+}
+
+func (r *workLogRepo) ListByIssue(ctx context.Context, projectID, issueID string, limit int) ([]*domain.WorkLog, error) {
+	return r.list(ctx, `wl.project_id = $1 AND wl.issue_id = $3`, projectID, limit, issueID)
+}
+
+// list returns the newest entries matching where; $1 and $2 are always the project and the limit.
+func (r *workLogRepo) list(ctx context.Context, where string, projectID string, limit int, extra ...any) ([]*domain.WorkLog, error) {
 	rows, err := r.db.QueryContext(ctx, workLogSelect+`
 		  FROM work_logs wl
 		  JOIN issues i ON i.id = wl.issue_id
 		  JOIN app_users u ON u.id = wl.user_id
-		 WHERE wl.project_id = $1
+		 WHERE `+where+`
 		 ORDER BY wl.logged_at DESC, wl.id
-		 LIMIT $2`, projectID, limit)
+		 LIMIT $2`, append([]any{projectID, limit}, extra...)...)
 	if err != nil {
 		return nil, fmt.Errorf("list work logs: %w", err)
 	}
@@ -87,6 +96,11 @@ func (r *workLogRepo) sum(ctx context.Context, query string, args ...any) (float
 
 func (r *workLogRepo) SumProjectHours(ctx context.Context, projectID string) (float64, error) {
 	return r.sum(ctx, `SELECT COALESCE(SUM(hours), 0)::float8 FROM work_logs WHERE project_id = $1`, projectID)
+}
+
+func (r *workLogRepo) SumIssueHours(ctx context.Context, projectID, issueID string) (float64, error) {
+	return r.sum(ctx, `SELECT COALESCE(SUM(hours), 0)::float8 FROM work_logs WHERE project_id = $1 AND issue_id = $2`,
+		projectID, issueID)
 }
 
 func (r *workLogRepo) SumSprintHours(ctx context.Context, projectID, sprintID string) (float64, error) {

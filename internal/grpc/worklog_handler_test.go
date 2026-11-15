@@ -126,3 +126,20 @@ func TestWorkLogGRPC_ErrorCodes(t *testing.T) {
 	_, err = f.client.LogWork(ctx, &issuesv1.LogWorkRequest{UserId: wlMember, ProjectId: wlProject, IssueId: wlIssue, Hours: 1})
 	requireCode(t, err, codes.Internal, "failed to log work")
 }
+
+func TestWorkLogGRPC_ListByIssue(t *testing.T) {
+	f := setupWorkLogFixture(t)
+	ctx := context.Background()
+	_, err := f.client.LogWork(ctx, &issuesv1.LogWorkRequest{UserId: wlMember, ProjectId: wlProject, IssueId: wlIssue, Hours: 2})
+	require.NoError(t, err)
+
+	listed, err := f.client.ListWorkLogs(ctx, &issuesv1.ListWorkLogsRequest{RequesterId: wlMember, ProjectId: wlProject, IssueId: wlIssue})
+	require.NoError(t, err)
+	require.Len(t, listed.GetEntries(), 1)
+	assert.Equal(t, 2.0, listed.GetTotalHours())
+
+	_, err = f.client.ListWorkLogs(ctx, &issuesv1.ListWorkLogsRequest{RequesterId: wlMember, ProjectId: wlProject, IssueId: "WEB-1"})
+	requireCode(t, err, codes.InvalidArgument, "issue_id must be a valid UUID")
+	_, err = f.client.ListWorkLogs(ctx, &issuesv1.ListWorkLogsRequest{RequesterId: wlMember, ProjectId: wlProject, IssueId: wlSprint})
+	requireCode(t, err, codes.NotFound, "issue not found in this project")
+}
