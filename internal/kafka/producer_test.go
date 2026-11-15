@@ -66,8 +66,9 @@ func TestKafkaProducer_EmitIssueCreated_EnvelopeConformity(t *testing.T) {
 	require.Len(t, mockWriter.messages, 1)
 	msg := mockWriter.messages[0]
 
-	// 1. Assert Topic & Partition Key
-	assert.Equal(t, "issues.events", msg.Topic)
+	// 1. Assert Topic & Partition Key. The topic lives on the kafka.Writer; setting it on the
+	// message too makes kafka-go reject every write, so the message must leave it empty.
+	assert.Empty(t, msg.Topic)
 	assert.Equal(t, issue.ID, string(msg.Key), "Partition key must equal issue.id")
 
 	// 2. Deserialize JSON envelope
@@ -235,6 +236,26 @@ func TestKafkaProducer_DirectMethods(t *testing.T) {
 	assert.Equal(t, kafkapkg.EventTypeIssueDeleted, evDeleted.EventType)
 
 	require.Len(t, mockWriter.messages, 3)
+}
+
+// Uses the real kafka.Writer (no broker): kafka-go validates the topic before any network call,
+// so a duplicated topic fails immediately with "Topic must not be specified for both Writer and
+// Message". With the fix, the write gets past that check and only fails on the unreachable broker.
+func TestKafkaProducer_RealWriter_DoesNotDuplicateTopic(t *testing.T) {
+	p := kafkapkg.NewEventProducer([]string{"127.0.0.1:1"}, "issues.events")
+	defer p.Close()
+
+	issue, err := domain.NewIssue("p1", "PROJ-7", "Real writer", "", domain.IssuePriorityLow, domain.IssueTypeTask, 1, "")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	err = p.PublishIssueCreated(ctx, issue)
+
+	require.Error(t, err, "no broker is listening, so the write must fail")
+	assert.NotContains(t, err.Error(), "Topic must not be specified")
+	assert.NotContains(t, err.Error(), "Topic must be specified")
+	assert.Contains(t, err.Error(), "issues.events", "the error names the configured topic")
 }
 
 func TestKafkaProducer_RealConstructor(t *testing.T) {

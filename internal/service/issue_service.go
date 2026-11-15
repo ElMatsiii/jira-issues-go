@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -15,6 +16,16 @@ import (
 type issueService struct {
 	repo     repository.IssueRepository
 	producer kafka.EventProducer
+}
+
+// logPublishError records a failed domain-event publication. The database change is already
+// committed, so the RPC still succeeds, but the failure must be visible: MS3 analytics depend on
+// these events and a silent loss leaves the burndown without data.
+func logPublishError(eventType string, issue *domain.Issue, err error) {
+	if err == nil {
+		return
+	}
+	log.Printf("[ERROR] Kafka publish failed: event=%s issueId=%s key=%s: %v", eventType, issue.ID, issue.Key, err)
 }
 
 // NewIssueService constructs a new business logic service for issues.
@@ -86,7 +97,7 @@ func (s *issueService) CreateIssue(ctx context.Context, dto CreateIssueDTO) (*do
 	}
 
 	if s.producer != nil {
-		_ = s.producer.PublishIssueCreated(ctx, issue)
+		logPublishError("ISSUE_CREATED", issue, s.producer.PublishIssueCreated(ctx, issue))
 	}
 
 	return issue, nil
@@ -123,7 +134,7 @@ func (s *issueService) UpdateIssueStatus(ctx context.Context, id string, newStat
 	}
 
 	if s.producer != nil {
-		_ = s.producer.PublishIssueStatusChanged(ctx, issue, prevStatus)
+		logPublishError("ISSUE_STATUS_CHANGED", issue, s.producer.PublishIssueStatusChanged(ctx, issue, prevStatus))
 	}
 
 	return issue, nil
@@ -142,7 +153,7 @@ func (s *issueService) BatchUpdateIssueSprint(ctx context.Context, ids []string,
 	count := int32(len(updated))
 	if s.producer != nil {
 		for _, issue := range updated {
-			_ = s.producer.PublishIssueSprintAssigned(ctx, issue, nil)
+			logPublishError("ISSUE_SPRINT_ASSIGNED", issue, s.producer.PublishIssueSprintAssigned(ctx, issue, nil))
 		}
 	}
 
