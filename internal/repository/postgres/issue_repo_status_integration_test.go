@@ -83,3 +83,12 @@ func TestIntegration_UpdateStatus_UnknownIssue_NotFound(t *testing.T) {
 
 	assert.ErrorIs(t, err, domain.ErrNotFound)
 }
+
+func TestIntegration_GetNextSequence_UnknownProject_NotFound(t *testing.T) {
+	db := openIntegrationDB(t)
+	repo := postgres.NewIssueRepository(db)
+
+	_, _, err := repo.GetNextSequence(context.Background(), uuid.NewString())
+
+	assert.ErrorIs(t, err, domain.ErrNotFound, "the service turns this into ErrProjectNotFound")
+}

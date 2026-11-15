@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -28,6 +29,19 @@ func (s *Server) CreateIssue(ctx context.Context, req *issuesv1.CreateIssueReque
 	projectID := strings.TrimSpace(req.GetProjectId())
 	if projectID == "" {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
+	// projects.id is a UUID column: a malformed value would surface as an opaque Postgres error.
+	if _, err := uuid.Parse(projectID); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "project_id must be a valid UUID, got %q", projectID)
+	}
+
+	// UNSPECIFIED (0) means "not provided" and gets a default; any other unknown number is a client error
+	// (the proto converters would silently turn it into UNSPECIFIED and then MEDIUM/STORY).
+	if _, known := issuesv1.IssuePriority_name[int32(req.GetPriority())]; !known {
+		return nil, status.Errorf(codes.InvalidArgument, "unknown priority value %d", req.GetPriority())
+	}
+	if _, known := issuesv1.IssueType_name[int32(req.GetType())]; !known {
+		return nil, status.Errorf(codes.InvalidArgument, "unknown issue type value %d", req.GetType())
 	}
 
 	if req.GetStoryPoints() < 0 {

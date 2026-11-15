@@ -76,7 +76,7 @@ func TestGRPCHandler_CreateIssue_Success(t *testing.T) {
 
 	ctx := context.Background()
 	resp, err := fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId:          "proj-uuid-1",
+		ProjectId:          "11111111-1111-4111-8111-111111111111",
 		Title:              "gRPC Wire Test Issue",
 		Description:        "Testing over bufconn",
 		Priority:           issuesv1.IssuePriority_ISSUE_PRIORITY_HIGH,
@@ -102,7 +102,7 @@ func TestGRPCHandler_CreateIssue_InvalidArgument(t *testing.T) {
 
 	// Missing title
 	_, err := fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId: "proj-uuid-1",
+		ProjectId: "11111111-1111-4111-8111-111111111111",
 		Title:     "",
 	})
 	require.Error(t, err)
@@ -122,7 +122,7 @@ func TestGRPCHandler_CreateIssue_InvalidArgument(t *testing.T) {
 
 	// Negative story points
 	_, err = fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId:   "proj-uuid-1",
+		ProjectId:   "11111111-1111-4111-8111-111111111111",
 		Title:       "Valid Title",
 		StoryPoints: -1,
 	})
@@ -348,7 +348,7 @@ func TestGRPCHandler_CreateIssue_UnexpectedRepoError_Internal(t *testing.T) {
 	defer func() { fixture.repo.CreateErr = nil }()
 
 	_, err := fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId: "proj-uuid-1",
+		ProjectId: "11111111-1111-4111-8111-111111111111",
 		Title:     "New Task",
 	})
 	require.Error(t, err)
@@ -367,7 +367,7 @@ func TestGRPCHandler_CreateIssue_BoundaryValidation(t *testing.T) {
 	// Title exceeding 255 characters
 	longTitle := strings.Repeat("A", 256)
 	_, err := fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId: "proj-uuid-1",
+		ProjectId: "11111111-1111-4111-8111-111111111111",
 		Title:     longTitle,
 	})
 	require.Error(t, err)
@@ -378,7 +378,7 @@ func TestGRPCHandler_CreateIssue_BoundaryValidation(t *testing.T) {
 
 	// Whitespace-only title
 	_, err = fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId: "proj-uuid-1",
+		ProjectId: "11111111-1111-4111-8111-111111111111",
 		Title:     "   \t\n",
 	})
 	require.Error(t, err)
@@ -398,7 +398,7 @@ func TestGRPCHandler_CreateIssue_BoundaryValidation(t *testing.T) {
 
 	// Negative story points (-100)
 	_, err = fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId:   "proj-uuid-1",
+		ProjectId:   "11111111-1111-4111-8111-111111111111",
 		Title:       "Valid Title",
 		StoryPoints: -100,
 	})
@@ -434,7 +434,7 @@ func TestGRPCHandler_ListIssues_UnexpectedRepoError_Internal(t *testing.T) {
 	defer func() { fixture.repo.ListErr = nil }()
 
 	_, err := fixture.client.ListIssues(ctx, &issuesv1.ListIssuesRequest{
-		ProjectId: "proj-uuid-1",
+		ProjectId: "11111111-1111-4111-8111-111111111111",
 	})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -522,7 +522,7 @@ func TestGRPCHandler_UpdateIssueStatus_LifecycleMatrix(t *testing.T) {
 
 	ctx := context.Background()
 	created, err := fixture.client.CreateIssue(ctx, &issuesv1.CreateIssueRequest{
-		ProjectId: "proj-matrix",
+		ProjectId: "22222222-2222-4222-8222-222222222222",
 		Title:     "Matrix Issue",
 	})
 	require.NoError(t, err)

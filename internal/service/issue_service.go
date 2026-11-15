@@ -45,19 +45,25 @@ func (s *issueService) CreateIssue(ctx context.Context, dto CreateIssueDTO) (*do
 
 	projectID := strings.TrimSpace(dto.ProjectID)
 	if projectID == "" {
-		projectID = "00000000-0000-0000-0000-000000000001" // Default project UUID
+		return nil, domain.ErrEmptyProjectID
 	}
 
-	// Determine next sequence
-	var issueKey string
+	// Reserving the next number also proves the project exists. A failure used to be swallowed,
+	// producing keys like "PROJ-0" and an opaque foreign-key error on insert.
 	seq, prefix, err := s.repo.GetNextSequence(ctx, projectID)
-	if err == nil && prefix != "" {
-		issueKey = fmt.Sprintf("%s-%d", prefix, seq)
-	} else if dto.ProjectKey != "" {
-		issueKey = fmt.Sprintf("%s-%d", dto.ProjectKey, seq)
-	} else {
-		issueKey = fmt.Sprintf("PROJ-%d", seq)
+	if errors.Is(err, domain.ErrNotFound) {
+		return nil, fmt.Errorf("%w: %s", domain.ErrProjectNotFound, projectID)
 	}
+	if err != nil {
+		return nil, fmt.Errorf("reserve issue key for project %s: %w", projectID, err)
+	}
+	if prefix == "" {
+		prefix = strings.TrimSpace(dto.ProjectKey)
+	}
+	if prefix == "" {
+		return nil, fmt.Errorf("%w: project %s has no key", domain.ErrProjectNotFound, projectID)
+	}
+	issueKey := fmt.Sprintf("%s-%d", prefix, seq)
 
 	priority := dto.Priority
 	if priority == domain.PriorityUnspecified {
@@ -130,6 +136,12 @@ func (s *issueService) UpdateIssueStatus(ctx context.Context, id string, newStat
 		}
 		if current == nil {
 			return nil, domain.ErrNotFound
+		}
+
+		// Same status: nothing changes, so nothing is written and no ISSUE_STATUS_CHANGED is emitted
+		// (it used to publish an event whose previousStatus equalled the new status).
+		if current.Status == newStatus {
+			return current, nil
 		}
 
 		// Work on a copy so the version read stays intact for the guarded update.
